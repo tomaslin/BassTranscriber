@@ -1,0 +1,5 @@
+.DS_Store
+stems_*
+*.mp3
+.venv*
+
