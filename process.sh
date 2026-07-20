@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Bass Transcription Pipeline (M1 Optimized)
-# Usage: ./process.sh <path_to_stems_folder> [--tuning <tuning_type>]
+# Bass Transcription Pipeline (M1 Optimized) - Articulation & Ergonomics Mod
+# Usage: ./process.sh <path_to_stems_folder> [--tuning <tuning_type>] [--genre <genre_name>]
 # ==============================================================================
 
 set -euo pipefail
@@ -10,7 +10,6 @@ STEMS_DIRS=()
 TUNING="auto"
 GENRE_OVERRIDE="auto"
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
     --tuning)
@@ -29,7 +28,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ ${#STEMS_DIRS[@]} -eq 0 ]; then
-    echo "Error: No stems directory provided. Usage: $0 <path_to_stems_folder1> [<path_to_stems_folder2> ...] [--tuning <tuning_type>] [--genre <genre_type>]"
     exit 1
 fi
 
@@ -43,7 +41,7 @@ if command -v python3.11 &> /dev/null; then
 elif command -v python3 &> /dev/null; then
     PY_CMD="python3"
 else
-    echo "Error: Python 3.11+ required."; exit 1;
+    exit 1
 fi
 
 OUT_DIR="./output_bass"
@@ -51,27 +49,26 @@ ENV_DIR=".venv_bass"
 mkdir -p "$OUT_DIR"
 
 if [ ! -d "$ENV_DIR" ]; then
-    $PY_CMD -m venv "$ENV_DIR"
+    $PY_CMD -m venv "$ENV_DIR" > /dev/null 2>&1
 fi
 source "$ENV_DIR/bin/activate"
 
-# Installing dependencies silently
-"$ENV_DIR/bin/python" -m pip install --upgrade pip wheel > "$ENV_DIR/pip_install.log" 2>&1
-"$ENV_DIR/bin/python" -m pip install "setuptools<82" >> "$ENV_DIR/pip_install.log" 2>&1
+"$ENV_DIR/bin/python" -m pip install --upgrade pip wheel > /dev/null 2>&1
+"$ENV_DIR/bin/python" -m pip install "setuptools<82" > /dev/null 2>&1
 
 OS_NAME=$(uname -s)
 ARCH_NAME=$(uname -m)
 
 if [ "$OS_NAME" = "Darwin" ] && [ "$ARCH_NAME" = "arm64" ]; then
-    "$ENV_DIR/bin/python" -m pip install --no-cache-dir "tensorflow-macos<2.16.0" "tensorflow-metal==1.1.0" >> "$ENV_DIR/pip_install.log" 2>&1
+    "$ENV_DIR/bin/python" -m pip install --no-cache-dir "tensorflow-macos<2.16.0" "tensorflow-metal==1.1.0" > /dev/null 2>&1
 else
-    "$ENV_DIR/bin/python" -m pip install --no-cache-dir "tensorflow<2.16.0" >> "$ENV_DIR/pip_install.log" 2>&1
+    "$ENV_DIR/bin/python" -m pip install --no-cache-dir "tensorflow<2.16.0" > /dev/null 2>&1
 fi
 
 "$ENV_DIR/bin/python" -m pip install --no-cache-dir \
     "numpy==1.26.4" "scipy==1.12.0" "soundfile==0.12.1" "soxr==0.3.7" \
     "librosa==0.10.1" "music21==9.1.0" "pretty_midi==0.2.10" \
-    "basic-pitch>=0.4.0" "resampy==0.4.2" >> "$ENV_DIR/pip_install.log" 2>&1
+    "basic-pitch>=0.4.0" "resampy==0.4.2" > /dev/null 2>&1
 
 cleanup() { rm -f run_engine_bass.py; }
 trap cleanup EXIT
@@ -97,14 +94,12 @@ logging.getLogger().setLevel(logging.ERROR)
 
 import librosa
 import soundfile as sf
+import music21
 from pathlib import Path
 from scipy.signal import butter, filtfilt
 from basic_pitch.inference import predict as bp_predict
 from music21 import instrument, clef, metadata, tempo, stream, note, chord, meter, key, articulations, pitch, spanner, expressions, harmony, dynamics
 
-# ==============================================================================
-# EXPANDED SUBGENRE OPTIMIZATION REGISTRY
-# ==============================================================================
 SUBGENRE_REGISTRY = {
     "metal": {"low_cut": 30, "high_cut": 2500, "onset_threshold": 0.70, "frame_threshold": 0.40, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.03},
     "rock": {"low_cut": 50, "high_cut": 2000, "onset_threshold": 0.60, "frame_threshold": 0.45, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.04},
@@ -137,27 +132,19 @@ SUBGENRE_REGISTRY = {
 def get_config(genre):
     return SUBGENRE_REGISTRY.get(genre, SUBGENRE_REGISTRY["none"])
 
-# ==============================================================================
-# K-NEAREST NEIGHBORS AUDIO PROFILING (AUTO-DETECTION)
-# ==============================================================================
 def auto_detect_profile(bass_wav_path, drums_wav_path):
     y_b, sr_b = librosa.load(str(bass_wav_path), sr=22050, mono=True, res_type='soxr_hq')
-    
-    if len(y_b) == 0:
-        return "none", 120.0, y_b, sr_b
+    if len(y_b) == 0: return "none", 120.0, y_b, sr_b
 
-    # Pre-filter the bass audio before analyzing to prevent high-frequency cymbal bleed from skewing metrics
     b_feat, a_feat = butter(2, 800 / (sr_b / 2), btype='low')
     y_b_feat = filtfilt(b_feat, a_feat, y_b)
 
-    # 1. Bass Features: Brightness & ZCR
     cent = librosa.feature.spectral_centroid(y=y_b_feat, sr=sr_b)
     avg_centroid = np.median(cent)
     
     zcr = librosa.feature.zero_crossing_rate(y=y_b_feat)
     avg_zcr = np.median(zcr)
 
-    # 2. Rhythm Features
     if drums_wav_path.exists():
         y_rhythm, sr_rhythm = librosa.load(str(drums_wav_path), sr=22050, mono=True, res_type='soxr_hq')
     else:
@@ -177,7 +164,7 @@ def auto_detect_profile(bass_wav_path, drums_wav_path):
         "rock":       {"bpm": (120, 20), "centroid": (450, 150), "density": (3.2, 1.0), "zcr": (0.040, 0.020)},
         "jazz":       {"bpm": (110, 30), "centroid": (250, 80),  "density": (2.8, 0.8), "zcr": (0.020, 0.010)},
         "swing":      {"bpm": (130, 30), "centroid": (200, 80),  "density": (3.0, 0.8), "zcr": (0.015, 0.010)},
-        "bachata":    {"bpm": (130, 15), "centroid": (180, 50), "density": (4.1, 0.8), "zcr": (0.010, 0.005)},
+        "bachata":    {"bpm": (130, 15), "centroid": (180, 50),  "density": (4.1, 0.8), "zcr": (0.010, 0.005)},
         "funk":       {"bpm": (105, 15), "centroid": (650, 200), "density": (4.0, 1.2), "zcr": (0.060, 0.020)},
         "hiphop":     {"bpm": (90, 15),  "centroid": (150, 60),  "density": (2.2, 0.8), "zcr": (0.015, 0.010)},
         "reggae":     {"bpm": (75, 15),  "centroid": (130, 40),  "density": (1.8, 0.6), "zcr": (0.012, 0.008)},
@@ -200,23 +187,18 @@ def auto_detect_profile(bass_wav_path, drums_wav_path):
         "classical":  {"bpm": (80, 30),  "centroid": (200, 100), "density": (1.5, 0.8), "zcr": (0.015, 0.010)}
     }
 
-    best_genre = "none"
-    shortest_distance = float('inf')
-
+    best_genre, shortest_distance = "none", float('inf')
     bpm_variants = [bpm, bpm / 2.0, bpm * 2.0]
 
     for g, stats in academic_profiles.items():
         for b_variant in bpm_variants:
-            if b_variant < 40 or b_variant > 220:
-                continue
-                
+            if b_variant < 40 or b_variant > 220: continue
             z_bpm = ((b_variant - stats["bpm"][0]) / stats["bpm"][1]) ** 2
             z_cent = ((avg_centroid - stats["centroid"][0]) / stats["centroid"][1]) ** 2
             z_dens = ((note_density - stats["density"][0]) / stats["density"][1]) ** 2
             z_zcr = ((avg_zcr - stats["zcr"][0]) / stats["zcr"][1]) ** 2
             
             total_distance = np.sqrt(z_bpm + z_cent + z_dens + z_zcr)
-            
             if total_distance < shortest_distance:
                 shortest_distance = total_distance
                 best_genre = g
@@ -225,12 +207,8 @@ def auto_detect_profile(bass_wav_path, drums_wav_path):
 
 def estimate_harmonic_key(y, sr):
     if len(y) == 0 or np.all(y == 0): return "C major"
-    
-    try:
-        chroma = librosa.feature.chroma_cqt(y=y, sr=sr, bins_per_octave=12)
-    except librosa.util.exceptions.ParameterError:
-        chroma = librosa.feature.chroma_stft(y=y, sr=sr)
-        
+    try: chroma = librosa.feature.chroma_cqt(y=y, sr=sr, bins_per_octave=12)
+    except: chroma = librosa.feature.chroma_stft(y=y, sr=sr)
     mean_chroma = np.mean(chroma, axis=1)
     
     ks_major = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
@@ -240,33 +218,18 @@ def estimate_harmonic_key(y, sr):
     ks_minor = (ks_minor - np.mean(ks_minor)) / np.std(ks_minor)
     mean_chroma_norm = (mean_chroma - np.mean(mean_chroma)) / (np.std(mean_chroma) + 1e-6)
     
-    best_corr = -1.0
-    best_key_idx = 0
-    is_minor = False
+    best_corr, best_key_idx, is_minor = -1.0, 0, False
     
     for i in range(12):
-        maj_profile = np.roll(ks_major, i)
-        min_profile = np.roll(ks_minor, i)
+        maj_corr = np.corrcoef(mean_chroma_norm, np.roll(ks_major, i))[0, 1]
+        min_corr = np.corrcoef(mean_chroma_norm, np.roll(ks_minor, i))[0, 1]
         
-        maj_corr = np.corrcoef(mean_chroma_norm, maj_profile)[0, 1]
-        min_corr = np.corrcoef(mean_chroma_norm, min_profile)[0, 1]
-        
-        if maj_corr > best_corr:
-            best_corr = maj_corr
-            best_key_idx = i
-            is_minor = False
-            
-        if min_corr > best_corr:
-            best_corr = min_corr
-            best_key_idx = i
-            is_minor = True
+        if maj_corr > best_corr: best_corr, best_key_idx, is_minor = maj_corr, i, False
+        if min_corr > best_corr: best_corr, best_key_idx, is_minor = min_corr, i, True
     
     major_map = {0: 'C', 1: 'D-', 2: 'D', 3: 'E-', 4: 'E', 5: 'F', 6: 'F#', 7: 'G', 8: 'A-', 9: 'A', 10: 'B-', 11: 'B'}
     minor_map = {0: 'C', 1: 'C#', 2: 'D', 3: 'E-', 4: 'E', 5: 'F', 6: 'F#', 7: 'G', 8: 'G#', 9: 'A', 10: 'B-', 11: 'B'}
-
-    root_name = minor_map[best_key_idx] if is_minor else major_map[best_key_idx]
-    mode = "minor" if is_minor else "major"
-    return f"{root_name} {mode}"
+    return f"{minor_map[best_key_idx] if is_minor else major_map[best_key_idx]} {'minor' if is_minor else 'major'}"
 
 def determine_tuning(min_pitch, requested_tuning):
     tunings = {
@@ -275,92 +238,67 @@ def determine_tuning(min_pitch, requested_tuning):
         "5-string": ([43, 38, 33, 28, 23], ["G", "D", "A", "E", "B"]),
         "6-string": ([48, 43, 38, 33, 28, 23], ["C", "G", "D", "A", "E", "B"])
     }
-    
-    if requested_tuning in tunings:
-        return tunings[requested_tuning]
-        
-    if min_pitch < 28 and min_pitch >= 23:
-        return tunings["5-string"]
-    elif min_pitch < 23:
-        return tunings["6-string"]
+    if requested_tuning in tunings: return tunings[requested_tuning]
+    if min_pitch < 28 and min_pitch >= 23: return tunings["5-string"]
+    elif min_pitch < 23: return tunings["6-string"]
     return tunings["standard"]
 
 def apply_viterbi_fretboard(notes, baselines, string_names):
     if not notes: return []
-    
-    states = []
-    for s_idx, base in enumerate(baselines):
-        for f in range(0, 25):
-            states.append((s_idx, f, base + f))
-            
+    states = [(s_idx, f, base + f) for s_idx, base in enumerate(baselines) for f in range(0, 21)]
     path_data = []
     
     for i, n in enumerate(notes):
         pitch_val = int(round(n.pitch))
         valid_states = [s for s in states if s[2] == pitch_val]
-        
-        if not valid_states:
-            valid_states = [(0, max(0, pitch_val - baselines[0]), pitch_val)]
+        if not valid_states: valid_states = [(0, max(0, pitch_val - baselines[0]), pitch_val)]
             
         step_paths = {}
         if i == 0:
             for vs in valid_states:
-                cost = abs(vs[1] - 5)
-                step_paths[vs] = (cost, [vs])
+                pref_cost = abs(vs[1] - 5) * 0.2
+                if vs[1] > 12: pref_cost += (vs[1] - 12) * 1.0
+                step_paths[vs] = (pref_cost, [vs])
         else:
             prev_paths = path_data[-1]
             for vs in valid_states:
-                best_cost = float('inf')
-                best_hist = []
+                best_cost, best_hist = float('inf'), []
                 
                 for ps, (prev_cost, prev_hist) in prev_paths.items():
+                    span = abs(vs[1] - ps[1])
+                    string_diff = abs(vs[0] - ps[0])
+                    
                     if vs[1] == 0:
                         fret_cost = 0.5
-                    elif ps[1] == 0:
-                        fret_cost = 1.0 + (vs[1] * 0.5)
+                    elif span <= 4:
+                        fret_cost = span * 0.1
                     else:
-                        span = abs(vs[1] - ps[1])
-                        if span <= 4:
-                            fret_cost = span * 0.5
-                        else:
-                            fret_cost = 2.0 + ((span - 4) ** 2)
+                        fret_cost = 1.0 + ((span - 4) ** 1.8)
                             
-                    if vs[1] > 7 and vs[0] < 2:
-                        fret_cost += (vs[1] - 7) * 1.5
-                            
-                    string_cost = abs(vs[0] - ps[0]) * 1.5
-                    move_cost = fret_cost + string_cost
+                    if vs[1] > 12: fret_cost += (vs[1] - 12) * 0.5
                     
-                    total_cost = prev_cost + move_cost
+                    string_cost = string_diff * 0.3
+                    total_cost = prev_cost + fret_cost + string_cost
+                    
                     if total_cost < best_cost:
-                        best_cost = total_cost
-                        best_hist = prev_hist + [vs]
+                        best_cost, best_hist = total_cost, prev_hist + [vs]
                 
                 step_paths[vs] = (best_cost, best_hist)
         path_data.append(step_paths)
         
     best_final_state = min(path_data[-1].items(), key=lambda x: x[1][0])
-    optimal_path = best_final_state[1][1]
-    
-    return [(string_names[s[0]], s[1]) for s in optimal_path]
+    return [(string_names[s[0]], s[1]) for s in best_final_state[1][1]]
 
 def extract_timbre(y_b, sr_b, start_time, end_time):
-    start_samp = int(start_time * sr_b)
-    end_samp = int(end_time * sr_b)
+    start_samp, end_samp = int(start_time * sr_b), int(end_time * sr_b)
     if end_samp <= start_samp: return "normal"
-    
     segment = y_b[start_samp:end_samp]
     if len(segment) < 512: return "normal"
     
-    rms = np.mean(librosa.feature.rms(y=segment))
-    if rms < 0.01: return "mute"
+    if np.mean(librosa.feature.rms(y=segment)) < 0.01: return "mute"
     
     S = np.abs(librosa.stft(segment))
-    if S.shape[1] > 1:
-        flux = np.mean(librosa.onset.onset_strength(S=librosa.amplitude_to_db(S, ref=np.max), sr=sr_b))
-    else:
-        flux = 0
-        
+    flux = np.mean(librosa.onset.onset_strength(S=librosa.amplitude_to_db(S, ref=np.max), sr=sr_b)) if S.shape[1] > 1 else 0
     rolloff = np.mean(librosa.feature.spectral_rolloff(y=segment, sr=sr_b, roll_percent=0.85))
     
     if flux > 3.0 and rolloff > 3500: return "pop"
@@ -368,45 +306,31 @@ def extract_timbre(y_b, sr_b, start_time, end_time):
     return "normal"
 
 def spell_pitch(midi_val, detected_key):
-    sharp_keys = ['G major', 'D major', 'A major', 'E major', 'B major', 'F# major', 'C# major',
-                  'E minor', 'B minor', 'F# minor', 'C# minor', 'G# minor', 'D# minor', 'A# minor']
-    flat_keys = ['F major', 'B- major', 'E- major', 'A- major', 'D- major', 'G- major', 'C- major',
-                 'D minor', 'G minor', 'C minor', 'F minor', 'B- minor', 'E- minor', 'A- minor']
-                 
+    sharp_keys = ['G major', 'D major', 'A major', 'E major', 'B major', 'F# major', 'C# major', 'E minor', 'B minor', 'F# minor', 'C# minor', 'G# minor', 'D# minor', 'A# minor']
+    flat_keys = ['F major', 'B- major', 'E- major', 'A- major', 'D- major', 'G- major', 'C- major', 'D minor', 'G minor', 'C minor', 'F minor', 'B- minor', 'E- minor', 'A- minor']
     p = pitch.Pitch(midi=int(round(midi_val)))
-    if detected_key in flat_keys:
-        if '#' in p.name:
-            p = p.getEnharmonic()
-    elif detected_key in sharp_keys:
-        if '-' in p.name:
-            p = p.getEnharmonic()
+    if detected_key in flat_keys and '#' in p.name: p = p.getEnharmonic()
+    elif detected_key in sharp_keys and '-' in p.name: p = p.getEnharmonic()
     return p
 
 def extract_chords(y, sr, bpm):
     if len(y) == 0: return []
-    try:
-        chroma = librosa.feature.chroma_cqt(y=y, sr=sr, bins_per_octave=12)
-    except:
-        chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+    try: chroma = librosa.feature.chroma_cqt(y=y, sr=sr, bins_per_octave=12)
+    except: chroma = librosa.feature.chroma_stft(y=y, sr=sr)
         
     maj_template = np.array([1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0])
     min_template = np.array([1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0])
     dom7_template = np.array([1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0])
     
-    templates = []
-    labels = []
+    templates, labels = [], []
     notes = ['C', 'C#', 'D', 'E-', 'E', 'F', 'F#', 'G', 'A-', 'A', 'B-', 'B']
     
     for i in range(12):
-        templates.append(np.roll(maj_template, i))
-        labels.append(notes[i])
-        templates.append(np.roll(min_template, i))
-        labels.append(notes[i] + 'm')
-        templates.append(np.roll(dom7_template, i))
-        labels.append(notes[i] + '7')
+        templates.append(np.roll(maj_template, i)); labels.append(notes[i])
+        templates.append(np.roll(min_template, i)); labels.append(notes[i] + 'm')
+        templates.append(np.roll(dom7_template, i)); labels.append(notes[i] + '7')
         
     templates = np.array(templates)
-    
     _, beat_frames = librosa.beat.beat_track(y=y, sr=sr, bpm=bpm)
     chords = []
     
@@ -419,65 +343,80 @@ def extract_chords(y, sr, bpm):
         mean_chroma = np.mean(segment, axis=1)
         mean_chroma = (mean_chroma - np.mean(mean_chroma)) / (np.std(mean_chroma) + 1e-6)
         
-        corrs = np.dot(templates, mean_chroma)
-        best_idx = np.argmax(corrs)
+        best_idx = np.argmax(np.dot(templates, mean_chroma))
         chords.append((i, labels[best_idx]))
         
     return chords
 
+def correct_octave_errors(raw_notes, y, sr):
+    corrected = []
+    for n in raw_notes:
+        start_s, end_s = int(n.start * sr), int(n.end * sr)
+        if end_s - start_s > 2048:
+            segment = y[start_s:end_s]
+            f0 = librosa.yin(segment, fmin=30, fmax=150, sr=sr)
+            median_f0 = np.nanmedian(f0)
+            if median_f0 > 0:
+                est_midi = librosa.hz_to_midi(median_f0)
+                if n.pitch - est_midi > 8: n.pitch -= 12
+        corrected.append(n)
+    return corrected
+
 def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, tuning, y_b, sr_b):
     cfg = get_config(genre)
     sc = stream.Score()
-    sc.insert(0, metadata.Metadata(title=f"Bass Transcription [{level.upper()}]"))
-    sc.insert(0, tempo.MetronomeMark(number=bpm))
+    lvl_label = level.lower()
+    
+    sc.insert(0, metadata.Metadata(title=f"Bass Transcription [{lvl_label.upper()}]"))
+    sc.insert(0, tempo.MetronomeMark(number=round(bpm)))
     
     k_tonic, k_mode = detected_key.split()
-    music_key = key.Key(k_tonic, k_mode)
-    sc.insert(0, music_key)
+    sc.insert(0, key.Key(k_tonic, k_mode))
     
     if genre in ['jazz', 'blues', 'hiphop', 'reggae', 'swing', 'zouk']:
-        feel_txt = expressions.TextExpression("Swing / Laid back")
-        feel_txt.placement = 'above'
-        sc.insert(0, feel_txt)
+        txt = expressions.TextExpression("Swing / Laid back")
+        txt.placement = 'above'; sc.insert(0, txt)
     elif genre in ['funk', 'disco', 'slap']:
-        feel_txt = expressions.TextExpression("16th note groove")
-        feel_txt.placement = 'above'
-        sc.insert(0, feel_txt)
+        txt = expressions.TextExpression("16th note groove")
+        txt.placement = 'above'; sc.insert(0, txt)
     elif genre in ['rock', 'metal', 'punk']:
-        feel_txt = expressions.TextExpression("Driving / Straight")
-        feel_txt.placement = 'above'
-        sc.insert(0, feel_txt)
+        txt = expressions.TextExpression("Driving / Straight")
+        txt.placement = 'above'; sc.insert(0, txt)
 
-    part = stream.Part()
+    part = stream.Part(id=f"Bass_{lvl_label}")
+    part.insert(0, meter.TimeSignature('4/4'))
     part.insert(0, clef.BassClef())
 
-    filtered_events = []
-    
     if len(raw_notes) > 0:
         avg_vel = np.median([ev.velocity for ev in raw_notes])
-        vel_threshold = max(20, avg_vel * 0.45)
-        ghost_threshold = max(30, avg_vel * 0.70)
+        vel_threshold = max(20, avg_vel * 0.40)
+        ghost_threshold = max(20, avg_vel * 0.35)
     else:
-        vel_threshold = 45
-        ghost_threshold = 50
-    
+        vel_threshold, ghost_threshold = 30, 25
+
+    chord_symbols = extract_chords(y_b, sr_b, bpm)
+    chord_roots = [pitch.Pitch(c[1].replace('m', '').replace('7', '')).pitchClass for c in chord_symbols]
+
+    filtered_events = []
     for ev in raw_notes:
         if ev.pitch < 15 or ev.pitch > 72: continue
         
-        if level == "simplex":
+        if (ev.end - ev.start) < 0.04 and ev.velocity < avg_vel * 0.8:
+            continue
+
+        if level == "easy":
             beat_loc = ev.start * (bpm / 60.0)
-            if abs(beat_loc % 1) > 0.35:
+            is_root = (ev.pitch % 12) in chord_roots
+            if not is_root and abs(beat_loc % 1) > 0.25 and ev.velocity < vel_threshold * 1.5:
                 continue
         elif level == "normal":
-            if ev.velocity < vel_threshold:
-                continue
+            if ev.velocity < vel_threshold: continue
         filtered_events.append(ev)
 
     if not filtered_events: return None
 
-    grouped_events = []
     filtered_events.sort(key=lambda x: x.start)
-    
+    grouped_events = []
     current_group = [filtered_events[0]]
     for ev in filtered_events[1:]:
         if ev.start - current_group[0].start < 0.03:
@@ -491,155 +430,122 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
     for group in grouped_events:
         group.sort(key=lambda x: x.pitch)
         resolved_events.append([group[0]])
-    part = stream.Part(id=f"Bass_{level}")
-    ts = meter.TimeSignature('4/4')
-    part.insert(0, ts)
-    
-    chord_symbols = extract_chords(y_b, sr_b, bpm)
-    for q_offset, chord_name in chord_symbols:
-        ch = harmony.ChordSymbol(chord_name)
-        part.insert(q_offset, ch)
-
-    part.insert(0, clef.BassClef())
 
     min_pitch = min([n.pitch for n in raw_notes])
     baselines, string_names = determine_tuning(min_pitch, tuning)
-    
-    viterbi_roots = [grp[0] for grp in resolved_events]
-    optimal_fingerings = apply_viterbi_fretboard(viterbi_roots, baselines, string_names)
+    optimal_fingerings = apply_viterbi_fretboard([grp[0] for grp in resolved_events], baselines, string_names)
 
-    if level == "simplex":
-        factor = 2
-        min_len = 1.0
-    elif level == "normal":
-        if genre in ['jazz', 'blues', 'reggae', 'swing', 'zouk']:
-            factor = 3
-        else:
-            factor = 4
-        min_len = 0.25
-    else:
-        if genre in ['jazz', 'blues', 'reggae', 'swing', 'zouk']:
-            factor = 6
-        elif genre in ['rock', 'pop', 'funk', 'disco', 'electronic', 'metal', 'punk']:
-            factor = 4
-        else:
-            factor = 12
-        min_len = 0.25
+    grid_subdiv = 3 if genre in ['jazz', 'blues', 'swing', 'zouk'] else 4
+    if level == "easy": grid_subdiv = 2
+
+    min_q_len = Fraction(1, grid_subdiv)
 
     quantized_events = []
     for idx, event_group in enumerate(resolved_events):
         base_ev = event_group[0]
-        
         raw_start_beat = base_ev.start * (bpm / 60.0)
         raw_end_beat = base_ev.end * (bpm / 60.0)
-        
-        if level == "simplex":
-            q_start = round(raw_start_beat * factor) / factor
-            q_end = q_start + 2.0
-        else:
-            q_start = round(raw_start_beat * factor) / factor
-            q_end = round(raw_end_beat * factor) / factor
-        
-        if q_end <= q_start: q_end = q_start + min_len
-            
+
+        q_start_num = int(round(raw_start_beat * grid_subdiv))
+        q_start = Fraction(q_start_num, grid_subdiv)
+
+        q_end_num = int(round(raw_end_beat * grid_subdiv))
+        q_end = Fraction(q_end_num, grid_subdiv)
+
+        if q_end <= q_start:
+            q_end = q_start + min_q_len
+
         quantized_events.append({
-            "start": q_start, "end": q_end,
-            "group": event_group, "base": base_ev,
-            "fingering": optimal_fingerings[idx]
+            "start": q_start,
+            "end": q_end,
+            "raw_start": base_ev.start,
+            "raw_end": base_ev.end,
+            "group": event_group,
+            "base": base_ev,
+            "fingering": optimal_fingerings[idx],
+            "staccato": False
         })
 
     for i in range(len(quantized_events) - 1):
-        if quantized_events[i+1]["start"] - quantized_events[i]["start"] < min_len:
-            quantized_events[i+1]["start"] = quantized_events[i]["start"] + min_len
-            
-        if quantized_events[i]["end"] > quantized_events[i+1]["start"]:
-            quantized_events[i]["end"] = quantized_events[i+1]["start"]
-            
-        gap = quantized_events[i+1]["start"] - quantized_events[i]["end"]
-        orig_len = quantized_events[i]["end"] - quantized_events[i]["start"]
-        
-        quantized_events[i]["staccato"] = False
-        if 0 < gap <= 0.5:
-            quantized_events[i]["end"] = quantized_events[i+1]["start"]
-            if orig_len <= 0.25 and gap >= 0.15:
-                quantized_events[i]["staccato"] = True
+        curr_ev = quantized_events[i]
+        next_ev = quantized_events[i+1]
 
-    current_dyn_str = None
+        if next_ev["start"] <= curr_ev["start"]:
+            next_ev["start"] = curr_ev["start"] + min_q_len
+
+        gap = next_ev["start"] - curr_ev["end"]
+
+        if 0 <= gap <= Fraction(1, 2):
+            curr_ev["end"] = next_ev["start"]
+            if (curr_ev["raw_end"] - curr_ev["raw_start"]) * (bpm / 60.0) < 0.5:
+                curr_ev["staccato"] = True
+        elif curr_ev["end"] > next_ev["start"]:
+            curr_ev["end"] = max(curr_ev["start"] + min_q_len, next_ev["start"])
+
+    for q_offset, chord_name in chord_symbols:
+        part.insert(Fraction(q_offset, 1), harmony.ChordSymbol(chord_name))
+
+    dyn_windows = {}
+    for q_ev in quantized_events:
+        meas_idx = int(q_ev["start"] // 8)
+        if meas_idx not in dyn_windows: dyn_windows[meas_idx] = []
+        dyn_windows[meas_idx].append(q_ev["base"].velocity)
+
+    window_dynamics = {}
+    last_dyn = None
+    for m_idx in sorted(dyn_windows.keys()):
+        avg_v = np.mean(dyn_windows[m_idx])
+        d_str = 'p' if avg_v < 45 else ('mp' if avg_v < 65 else ('mf' if avg_v < 85 else ('f' if avg_v < 105 else 'ff')))
+        if d_str != last_dyn:
+            window_dynamics[Fraction(m_idx * 8, 1)] = d_str
+            last_dyn = d_str
 
     for idx, q_ev in enumerate(quantized_events):
-        event_group = q_ev["group"]
-        base_ev = q_ev["base"]
+        event_group, base_ev = q_ev["group"], q_ev["base"]
         s_name, f_val = q_ev["fingering"]
 
-        start_num = int(round(q_ev["start"] * factor))
-        dur_num = int(round((q_ev["end"] - q_ev["start"]) * factor))
-        if dur_num <= 0: dur_num = 1
-
-        offset_val = Fraction(start_num, factor)
-        q_length = Fraction(dur_num, factor)
-
-        is_staccato = q_ev.get("staccato", False)
-        if q_length == Fraction(3, 12) and level != "simplex":
-            if idx < len(quantized_events) - 1:
-                gap = quantized_events[idx+1]["start"] - q_ev["end"]
-                if gap >= 0.25:
-                    q_length = Fraction(6, 12)
-                    is_staccato = True
+        offset_val = q_ev["start"]
+        q_length = q_ev["end"] - q_ev["start"]
 
         is_grace = False
-        if (q_ev["end"] - q_ev["start"]) < 0.08 and idx < len(quantized_events) - 1:
-            next_q_ev = quantized_events[idx+1]
-            gap_to_next = next_q_ev["start"] - q_ev["end"]
-            if gap_to_next < 0.05:
+        if (q_ev["raw_end"] - q_ev["raw_start"]) < 0.06 and idx < len(quantized_events) - 1:
+            if (quantized_events[idx+1]["start"] - q_ev["end"]) <= 0:
                 is_grace = True
 
         if len(event_group) == 1:
             p = spell_pitch(base_ev.pitch, detected_key)
-            if is_grace:
-                music_element = note.GraceNote(p)
-            else:
-                music_element = note.Note(p)
+            base_node = note.Note(p)
         else:
-            pitches = [spell_pitch(e.pitch, detected_key) for e in event_group]
-            music_element = chord.Chord(pitches)
+            base_node = chord.Chord([spell_pitch(e.pitch, detected_key) for e in event_group])
 
-        if not is_grace:
-            music_element.duration.quarterLength = q_length
+        if is_grace:
+            music_element = base_node.getGrace()
+        else:
+            music_element = base_node
+            safe_q_length = max(0.0625, float(q_length))
+            music_element.duration.quarterLength = safe_q_length
+            music_element.duration.type = music21.duration.quarterLengthToClosestType(safe_q_length)[0]
         
-        if is_staccato:
+        if q_ev["staccato"]:
             music_element.articulations.append(articulations.Staccato())
 
         timbre = extract_timbre(y_b, sr_b, base_ev.start, base_ev.end)
-        
-        if base_ev.velocity < ghost_threshold or timbre == "mute":
+
+        if (base_ev.velocity < ghost_threshold and (base_ev.end - base_ev.start) < 0.08) or timbre == "mute":
             if music_element.isChord:
-                for n in music_element.notes:
-                    n.notehead = 'x'
+                for n in music_element.notes: n.notehead = 'x'
             else:
                 music_element.notehead = 'x'
-        
-        if timbre == "pop":
-            music_element.addLyric('P')
-        elif timbre == "slap":
-            music_element.addLyric('T')
 
-        string_map = {"G": 1, "D": 2, "A": 3, "E": 4, "B": 5, "C": 6}
-        str_num = string_map.get(s_name, 4)
-        
-        music_element.articulations.append(articulations.StringIndication(str_num))
+        if timbre == "pop": music_element.addLyric('P')
+        elif timbre == "slap": music_element.addLyric('T')
+
+        string_num = {"G": 1, "D": 2, "A": 3, "E": 4, "B": 5, "C": 6}.get(s_name, 4)
+        music_element.articulations.append(articulations.StringIndication(string_num))
         music_element.articulations.append(articulations.FretIndication(f_val))
 
-        vel = base_ev.velocity
-        if vel < 40: dyn_str = 'p'
-        elif vel < 65: dyn_str = 'mp'
-        elif vel < 85: dyn_str = 'mf'
-        elif vel < 105: dyn_str = 'f'
-        else: dyn_str = 'ff'
-        
-        if dyn_str != current_dyn_str and (current_dyn_str is None or idx % 4 == 0):
-            dyn_obj = dynamics.Dynamic(dyn_str)
-            part.insert(offset_val, dyn_obj)
-            current_dyn_str = dyn_str
+        if offset_val in window_dynamics:
+            part.insert(offset_val, dynamics.Dynamic(window_dynamics[offset_val]))
 
         part.insert(offset_val, music_element)
         q_ev["music_element"] = music_element
@@ -647,47 +553,43 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
     for idx, q_ev in enumerate(quantized_events):
         el1 = q_ev.get("music_element")
         if not el1: continue
-        
-        bends_in_note = [pb for pb in pitch_bends if q_ev["start"] <= pb.time <= q_ev["end"]]
-        has_slide = False
-        has_vibrato = False
+
+        bends_in_note = [pb for pb in pitch_bends if q_ev["raw_start"] <= pb.time <= q_ev["raw_end"]]
+        has_slide, has_vibrato = False, False
         if bends_in_note:
-            max_bend = max([pb.pitch for pb in bends_in_note])
-            min_bend = min([pb.pitch for pb in bends_in_note])
-            if max_bend > 1000 or min_bend < -1000:
-                has_slide = True
-            
-            if (q_ev["end"] - q_ev["start"]) > 0.4 and (max_bend - min_bend) > 200:
+            max_b, min_b = max([pb.pitch for pb in bends_in_note]), min([pb.pitch for pb in bends_in_note])
+            if max_b > 1000 or min_b < -1000: has_slide = True
+            if (q_ev["raw_end"] - q_ev["raw_start"]) > 0.4 and (max_b - min_b) > 200:
                 bend_vals = [pb.pitch for pb in bends_in_note]
                 diffs = [bend_vals[i] - bend_vals[i-1] for i in range(1, len(bend_vals))]
-                crossings = sum(1 for i in range(1, len(diffs)) if diffs[i-1] * diffs[i] < 0)
-                if crossings > 3:
+                if sum(1 for i in range(1, len(diffs)) if diffs[i-1] * diffs[i] < 0) > 3:
                     has_vibrato = True
 
         if has_vibrato:
             el1.articulations.append(articulations.Doit())
             el1.addLyric("vib.")
-                
+
         if idx < len(quantized_events) - 1:
             next_q_ev = quantized_events[idx+1]
-            gap = next_q_ev["start"] - q_ev["end"]
-            
-            s_name = q_ev["fingering"][0]
-            next_s_name = next_q_ev["fingering"][0]
-            
-            if gap <= 0.15 and s_name == next_s_name and q_ev["base"].pitch != next_q_ev["base"].pitch:
+            if (next_q_ev["raw_start"] - q_ev["raw_end"]) <= 0.15 and q_ev["fingering"][0] == next_q_ev["fingering"][0] and q_ev["base"].pitch != next_q_ev["base"].pitch:
                 el2 = next_q_ev.get("music_element")
                 if el2:
-                    if has_slide:
-                        gl = spanner.Glissando([el1, el2])
-                        part.insert(0, gl)
-                    else:
-                        sl = spanner.Slur([el1, el2])
-                        part.insert(0, sl)
+                    try:
+                        part.insert(0, spanner.Glissando([el1, el2]) if has_slide else spanner.Slur([el1, el2]))
+                    except Exception:
+                        pass
 
     if len(part.flatten().notesAndRests) > 0:
         part.makeRests(fillGaps=True, inPlace=True)
         part = part.makeMeasures()
+
+        for el in part.flatten().notesAndRests:
+            if not el.duration.type or el.duration.type == 'unrepresentable':
+                if el.duration.quarterLength == 0:
+                    el.duration.type = 'zero'
+                else:
+                    el.duration.type = music21.duration.quarterLengthToClosestType(el.duration.quarterLength)[0]
+
         part.makeNotation(inPlace=True)
         sc.append(part)
 
@@ -704,23 +606,17 @@ def main():
     bass_wav = stems_dir / "bass.wav"
     drums_wav = stems_dir / "drums.wav"
 
-    if not bass_wav.exists():
-        print(f"Error: bass.wav missing from {stems_dir}")
-        sys.exit(1)
+    if not bass_wav.exists(): sys.exit(1)
 
-    if genre_override != "auto":
-        auto_genre, bpm, y_b, sr_b = auto_detect_profile(bass_wav, drums_wav)
-        genre = genre_override
-    else:
-        genre, bpm, y_b, sr_b = auto_detect_profile(bass_wav, drums_wav)
+    genre, bpm, y_b, sr_b = auto_detect_profile(bass_wav, drums_wav) if genre_override == "auto" else (genre_override, *auto_detect_profile(bass_wav, drums_wav)[1:])
+    
+    print(f"Processing: {project_name} | Genre: {genre}")
     
     cfg = get_config(genre)
     detected_key = estimate_harmonic_key(y_b, sr_b)
 
     nyq = 0.5 * sr_b
-    low_hz = max(1.0, cfg["low_cut"])
-    high_hz = min(nyq - 1.0, cfg["high_cut"])
-    b, a = butter(4, [low_hz / nyq, high_hz / nyq], btype='band')
+    b, a = butter(6, 1200 / nyq, btype='low')
     y_b_filtered = filtfilt(b, a, y_b)
 
     if np.max(np.abs(y_b_filtered)) > 0:
@@ -738,38 +634,30 @@ def main():
                 minimum_note_length=cfg["minimum_note_length"]
             )
             
-        if not bass_midi.instruments:
-            sys.exit(0)
+        if not bass_midi.instruments: sys.exit(0)
             
         raw_notes = bass_midi.instruments[0].notes
         pitch_bends = bass_midi.instruments[0].pitch_bends
         
-    except Exception as e:
-        print(f"Error during inference: {e}")
+        raw_notes = correct_octave_errors(raw_notes, y_b, sr_b)
+        
+    except Exception:
         sys.exit(1)
     finally:
         if cond_wav.exists(): cond_wav.unlink()
 
-    if len(raw_notes) == 0:
-        sys.exit(1)
+    if len(raw_notes) == 0: sys.exit(1)
 
-    for lvl in ["simplex", "normal", "complex"]:
+    for lvl in ["easy", "normal", "advanced"]:
         score_obj = process_score_tier(raw_notes, pitch_bends, lvl, genre, bpm, detected_key, tuning_pref, y_b, sr_b)
         if score_obj:
-            target_output = out_dir / f"{project_name}_bass_{lvl}_{genre}.musicxml"
-            score_obj.write('musicxml', fp=str(target_output))
-
-    print(f"Success: Files written to {out_dir}/")
+            score_obj.write('musicxml', fp=str(out_dir / f"{project_name}_bass_{lvl}_{genre}.musicxml"))
 
 if __name__ == "__main__":
     main()
 EOF
 
 for STEMS_DIR in "${STEMS_DIRS[@]}"; do
-    if [ ! -d "$STEMS_DIR" ]; then
-        echo "Warning: Directory not found -> $STEMS_DIR. Skipping..."
-        continue
-    fi
-    echo "Processing $STEMS_DIR..."
+    if [ ! -d "$STEMS_DIR" ]; then continue; fi
     "$ENV_DIR/bin/python" run_engine_bass.py "$STEMS_DIR" "$TUNING" "$GENRE_OVERRIDE"
 done
