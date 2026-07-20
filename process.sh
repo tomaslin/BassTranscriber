@@ -66,8 +66,8 @@ else
 fi
 
 "$ENV_DIR/bin/python" -m pip install --no-cache-dir \
-    "numpy==1.26.4" "scipy==1.12.0" "soundfile==0.12.1" "soxr==0.3.7" \
-    "librosa==0.10.1" "music21==9.1.0" "pretty_midi==0.2.10" \
+    "numpy==1.26.4" "scipy==1.14.1" "soundfile==0.12.1" "soxr==0.3.7" \
+    "librosa>=0.10.2" "music21==9.1.0" "pretty_midi==0.2.10" \
     "basic-pitch>=0.4.0" "resampy==0.4.2" > /dev/null 2>&1
 
 cleanup() { rm -f run_engine_bass.py; }
@@ -397,90 +397,131 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
     chord_symbols = extract_chords(y_b, sr_b, bpm)
     chord_roots = [pitch.Pitch(c[1].replace('m', '').replace('7', '')).pitchClass for c in chord_symbols]
 
-    filtered_events = []
+    sanitized_raw_notes = []
     for ev in raw_notes:
-        if ev.pitch < 15 or ev.pitch > 72: continue
-        
-        if (ev.end - ev.start) < 0.04 and ev.velocity < avg_vel * 0.8:
+        if ev.pitch < 15 or ev.pitch > 72:
             continue
-
+            
+        duration = ev.end - ev.start
+        if duration < 0.05 and ev.velocity < (avg_vel * 0.75):
+            continue
+            
         if level == "easy":
             beat_loc = ev.start * (bpm / 60.0)
             is_root = (ev.pitch % 12) in chord_roots
             if not is_root and abs(beat_loc % 1) > 0.25 and ev.velocity < vel_threshold * 1.5:
                 continue
         elif level == "normal":
-            if ev.velocity < vel_threshold: continue
-        filtered_events.append(ev)
+            if ev.velocity < vel_threshold:
+                continue
+                
+        sanitized_raw_notes.append(ev)
 
-    if not filtered_events: return None
-
-    filtered_events.sort(key=lambda x: x.start)
-    grouped_events = []
-    current_group = [filtered_events[0]]
-    for ev in filtered_events[1:]:
-        if ev.start - current_group[0].start < 0.03:
-            current_group.append(ev)
-        else:
-            grouped_events.append(current_group)
-            current_group = [ev]
-    if current_group: grouped_events.append(current_group)
-
-    resolved_events = []
-    for group in grouped_events:
-        group.sort(key=lambda x: x.pitch)
-        resolved_events.append([group[0]])
-
-    min_pitch = min([n.pitch for n in raw_notes])
-    baselines, string_names = determine_tuning(min_pitch, tuning)
-    optimal_fingerings = apply_viterbi_fretboard([grp[0] for grp in resolved_events], baselines, string_names)
+    if not sanitized_raw_notes:
+        return None
 
     grid_subdiv = 3 if genre in ['jazz', 'blues', 'swing', 'zouk'] else 4
-    if level == "easy": grid_subdiv = 2
-
+    if level == "easy":
+        grid_subdiv = 2
     min_q_len = Fraction(1, grid_subdiv)
 
-    quantized_events = []
-    for idx, event_group in enumerate(resolved_events):
-        base_ev = event_group[0]
-        raw_start_beat = base_ev.start * (bpm / 60.0)
-        raw_end_beat = base_ev.end * (bpm / 60.0)
+    raw_quantized = []
+    for ev in sanitized_raw_notes:
+        raw_start_beat = ev.start * (bpm / 60.0)
+        raw_end_beat = ev.end * (bpm / 60.0)
 
-        q_start_num = int(round(raw_start_beat * grid_subdiv))
-        q_start = Fraction(q_start_num, grid_subdiv)
-
-        q_end_num = int(round(raw_end_beat * grid_subdiv))
-        q_end = Fraction(q_end_num, grid_subdiv)
-
+        q_start = Fraction(int(round(raw_start_beat * grid_subdiv)), grid_subdiv)
+        q_end = Fraction(int(round(raw_end_beat * grid_subdiv)), grid_subdiv)
         if q_end <= q_start:
             q_end = q_start + min_q_len
 
-        quantized_events.append({
+        raw_quantized.append({
             "start": q_start,
             "end": q_end,
-            "raw_start": base_ev.start,
-            "raw_end": base_ev.end,
-            "group": event_group,
-            "base": base_ev,
-            "fingering": optimal_fingerings[idx],
-            "staccato": False
+            "raw_start": ev.start,
+            "raw_end": ev.end,
+            "base": ev
         })
 
+    raw_quantized.sort(key=lambda x: x["start"])
+    grid_groups = {}
+    for q_ev in raw_quantized:
+        grid_groups.setdefault(q_ev["start"], []).append(q_ev)
+
+    # -------------------------------------------------------------------------
+    # Strict Monophony Selection Pass (Stops vertical chords & stacked notes)
+    # -------------------------------------------------------------------------
+    quantized_events = []
+    for start_tick in sorted(grid_groups.keys()):
+        group = grid_groups[start_tick]
+        group.sort(key=lambda x: x["base"].velocity, reverse=True)
+        best_ev = group[0]
+        best_ev["group"] = [best_ev["base"]]
+        best_ev["staccato"] = False
+        quantized_events.append(best_ev)
+
+    # -------------------------------------------------------------------------
+    # Chronological Flattening Pass (Stops timeline overlap & multi-voice rests)
+    # -------------------------------------------------------------------------
+    final_sanitized = []
+    for q_ev in quantized_events:
+        if not final_sanitized:
+            final_sanitized.append(q_ev)
+            continue
+        
+        prev_ev = final_sanitized[-1]
+        
+        if q_ev["start"] < prev_ev["end"]:
+            if q_ev["start"] <= prev_ev["start"]:
+                continue
+            else:
+                prev_ev["end"] = q_ev["start"]
+                if prev_ev["end"] <= prev_ev["start"]:
+                    prev_ev["end"] = prev_ev["start"] + min_q_len
+                    q_ev["start"] = prev_ev["end"]
+                    
+        if q_ev["end"] <= q_ev["start"]:
+            q_ev["end"] = q_ev["start"] + min_q_len
+            
+        final_sanitized.append(q_ev)
+        
+    quantized_events = final_sanitized
+
+    # -------------------------------------------------------------------------
+    # RHYTHMIC SMOOTHING & GAP CLOSING LAYER (Heals Disco/Pop Fragmentation)
+    # -------------------------------------------------------------------------
+    cleaned_quantized_events = []
+    for idx, q_ev in enumerate(quantized_events):
+        note_duration_sec = q_ev["raw_end"] - q_ev["raw_start"]
+        if note_duration_sec < 0.05 and idx < len(quantized_events) - 1:
+            continue
+
+        if cleaned_quantized_events:
+            prev_clean_ev = cleaned_quantized_events[-1]
+            gap_beats = q_ev["start"] - prev_clean_ev["end"]
+            
+            if 0 < gap_beats <= Fraction(3, 4):
+                prev_clean_ev["end"] = q_ev["start"]
+                
+        cleaned_quantized_events.append(q_ev)
+    quantized_events = cleaned_quantized_events
+
+    if quantized_events:
+        min_pitch = min([q["base"].pitch for q in quantized_events])
+        baselines, string_names = determine_tuning(min_pitch, tuning)
+        optimal_fingerings = apply_viterbi_fretboard([q["base"] for q in quantized_events], baselines, string_names)
+        for idx, q_ev in enumerate(quantized_events):
+            q_ev["fingering"] = optimal_fingerings[idx]
+
+    # Context-Aware Legato Adjustment (Safely heals rounding anomalies within profiles)
+    gap_tolerance_beats = Fraction(int(round(cfg["legato_gap_tolerance"] * (bpm / 60.0) * grid_subdiv)), grid_subdiv)
     for i in range(len(quantized_events) - 1):
         curr_ev = quantized_events[i]
         next_ev = quantized_events[i+1]
-
-        if next_ev["start"] <= curr_ev["start"]:
-            next_ev["start"] = curr_ev["start"] + min_q_len
-
         gap = next_ev["start"] - curr_ev["end"]
 
-        if 0 <= gap <= Fraction(1, 2):
+        if 0 <= gap <= max(min_q_len, gap_tolerance_beats):
             curr_ev["end"] = next_ev["start"]
-            if (curr_ev["raw_end"] - curr_ev["raw_start"]) * (bpm / 60.0) < 0.5:
-                curr_ev["staccato"] = True
-        elif curr_ev["end"] > next_ev["start"]:
-            curr_ev["end"] = max(curr_ev["start"] + min_q_len, next_ev["start"])
 
     for q_offset, chord_name in chord_symbols:
         part.insert(Fraction(q_offset, 1), harmony.ChordSymbol(chord_name))
@@ -488,7 +529,8 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
     dyn_windows = {}
     for q_ev in quantized_events:
         meas_idx = int(q_ev["start"] // 8)
-        if meas_idx not in dyn_windows: dyn_windows[meas_idx] = []
+        if meas_idx not in dyn_windows:
+            dyn_windows[meas_idx] = []
         dyn_windows[meas_idx].append(q_ev["base"].velocity)
 
     window_dynamics = {}
@@ -507,24 +549,12 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         offset_val = q_ev["start"]
         q_length = q_ev["end"] - q_ev["start"]
 
-        is_grace = False
-        if (q_ev["raw_end"] - q_ev["raw_start"]) < 0.06 and idx < len(quantized_events) - 1:
-            if (quantized_events[idx+1]["start"] - q_ev["end"]) <= 0:
-                is_grace = True
-
-        if len(event_group) == 1:
-            p = spell_pitch(base_ev.pitch, detected_key)
-            base_node = note.Note(p)
-        else:
-            base_node = chord.Chord([spell_pitch(e.pitch, detected_key) for e in event_group])
-
-        if is_grace:
-            music_element = base_node.getGrace()
-        else:
-            music_element = base_node
-            safe_q_length = max(0.0625, float(q_length))
-            music_element.duration.quarterLength = safe_q_length
-            music_element.duration.type = music21.duration.quarterLengthToClosestType(safe_q_length)[0]
+        p = spell_pitch(base_ev.pitch, detected_key)
+        music_element = note.Note(p)
+        safe_q_length = max(min_q_len, q_length)
+        
+        music_element.duration.quarterLength = safe_q_length
+        music_element.duration.type = music21.duration.quarterLengthToClosestType(safe_q_length)
         
         if q_ev["staccato"]:
             music_element.articulations.append(articulations.Staccato())
@@ -532,10 +562,7 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         timbre = extract_timbre(y_b, sr_b, base_ev.start, base_ev.end)
 
         if (base_ev.velocity < ghost_threshold and (base_ev.end - base_ev.start) < 0.08) or timbre == "mute":
-            if music_element.isChord:
-                for n in music_element.notes: n.notehead = 'x'
-            else:
-                music_element.notehead = 'x'
+            music_element.notehead = 'x'
 
         if timbre == "pop": music_element.addLyric('P')
         elif timbre == "slap": music_element.addLyric('T')
@@ -550,45 +577,49 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         part.insert(offset_val, music_element)
         q_ev["music_element"] = music_element
 
-    for idx, q_ev in enumerate(quantized_events):
-        el1 = q_ev.get("music_element")
-        if not el1: continue
-
-        bends_in_note = [pb for pb in pitch_bends if q_ev["raw_start"] <= pb.time <= q_ev["raw_end"]]
-        has_slide, has_vibrato = False, False
-        if bends_in_note:
-            max_b, min_b = max([pb.pitch for pb in bends_in_note]), min([pb.pitch for pb in bends_in_note])
-            if max_b > 1000 or min_b < -1000: has_slide = True
-            if (q_ev["raw_end"] - q_ev["raw_start"]) > 0.4 and (max_b - min_b) > 200:
-                bend_vals = [pb.pitch for pb in bends_in_note]
-                diffs = [bend_vals[i] - bend_vals[i-1] for i in range(1, len(bend_vals))]
-                if sum(1 for i in range(1, len(diffs)) if diffs[i-1] * diffs[i] < 0) > 3:
-                    has_vibrato = True
-
-        if has_vibrato:
-            el1.articulations.append(articulations.Doit())
-            el1.addLyric("vib.")
-
-        if idx < len(quantized_events) - 1:
-            next_q_ev = quantized_events[idx+1]
-            if (next_q_ev["raw_start"] - q_ev["raw_end"]) <= 0.15 and q_ev["fingering"][0] == next_q_ev["fingering"][0] and q_ev["base"].pitch != next_q_ev["base"].pitch:
-                el2 = next_q_ev.get("music_element")
-                if el2:
-                    try:
-                        part.insert(0, spanner.Glissando([el1, el2]) if has_slide else spanner.Slur([el1, el2]))
-                    except Exception:
-                        pass
-
     if len(part.flatten().notesAndRests) > 0:
         part.makeRests(fillGaps=True, inPlace=True)
         part = part.makeMeasures()
+
+        # -------------------------------------------------------------------------
+        # Deferred Spanner Engine (Executes safely inside established measures)
+        # -------------------------------------------------------------------------
+        for idx, q_ev in enumerate(quantized_events):
+            el1 = q_ev.get("music_element")
+            if not el1:
+                continue
+
+            bends_in_note = [pb for pb in pitch_bends if q_ev["raw_start"] <= pb.time <= q_ev["raw_end"]]
+            has_slide, has_vibrato = False, False
+            if bends_in_note:
+                max_b, min_b = max([pb.pitch for pb in bends_in_note]), min([pb.pitch for pb in bends_in_note])
+                if max_b > 1000 or min_b < -1000: has_slide = True
+                if (q_ev["raw_end"] - q_ev["raw_start"]) > 0.4 and (max_b - min_b) > 200:
+                    bend_vals = [pb.pitch for pb in bends_in_note]
+                    diffs = [bend_vals[i] - bend_vals[i-1] for i in range(1, len(bend_vals))]
+                    if sum(1 for i in range(1, len(diffs)) if diffs[i-1] * diffs[i] < 0) > 3:
+                        has_vibrato = True
+
+            if has_vibrato:
+                el1.articulations.append(articulations.Doit())
+                el1.addLyric("vib.")
+
+            if idx < len(quantized_events) - 1:
+                next_q_ev = quantized_events[idx+1]
+                if (next_q_ev["raw_start"] - q_ev["raw_end"]) <= 0.15 and q_ev["fingering"][0] == next_q_ev["fingering"][0] and q_ev["base"].pitch != next_q_ev["base"].pitch:
+                    el2 = next_q_ev.get("music_element")
+                    if el2:
+                        try:
+                            part.insert(el1.offset, spanner.Glissando([el1, el2]) if has_slide else spanner.Slur([el1, el2]))
+                        except Exception:
+                            pass
 
         for el in part.flatten().notesAndRests:
             if not el.duration.type or el.duration.type == 'unrepresentable':
                 if el.duration.quarterLength == 0:
                     el.duration.type = 'zero'
                 else:
-                    el.duration.type = music21.duration.quarterLengthToClosestType(el.duration.quarterLength)[0]
+                    el.duration.type = music21.duration.quarterLengthToClosestType(el.duration.quarterLength)
 
         part.makeNotation(inPlace=True)
         sc.append(part)
@@ -606,7 +637,8 @@ def main():
     bass_wav = stems_dir / "bass.wav"
     drums_wav = stems_dir / "drums.wav"
 
-    if not bass_wav.exists(): sys.exit(1)
+    if not bass_wav.exists():
+        sys.exit(1)
 
     genre, bpm, y_b, sr_b = auto_detect_profile(bass_wav, drums_wav) if genre_override == "auto" else (genre_override, *auto_detect_profile(bass_wav, drums_wav)[1:])
     
@@ -634,7 +666,8 @@ def main():
                 minimum_note_length=cfg["minimum_note_length"]
             )
             
-        if not bass_midi.instruments: sys.exit(0)
+        if not bass_midi.instruments:
+            sys.exit(0)
             
         raw_notes = bass_midi.instruments[0].notes
         pitch_bends = bass_midi.instruments[0].pitch_bends
@@ -644,9 +677,11 @@ def main():
     except Exception:
         sys.exit(1)
     finally:
-        if cond_wav.exists(): cond_wav.unlink()
+        if cond_wav.exists():
+            cond_wav.unlink()
 
-    if len(raw_notes) == 0: sys.exit(1)
+    if len(raw_notes) == 0:
+        sys.exit(1)
 
     for lvl in ["easy", "normal", "advanced"]:
         score_obj = process_score_tier(raw_notes, pitch_bends, lvl, genre, bpm, detected_key, tuning_pref, y_b, sr_b)
