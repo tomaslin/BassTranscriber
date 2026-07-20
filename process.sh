@@ -523,9 +523,6 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         if 0 <= gap <= max(min_q_len, gap_tolerance_beats):
             curr_ev["end"] = next_ev["start"]
 
-    for q_offset, chord_name in chord_symbols:
-        part.insert(Fraction(q_offset, 1), harmony.ChordSymbol(chord_name))
-
     dyn_windows = {}
     for q_ev in quantized_events:
         meas_idx = int(q_ev["start"] // 8)
@@ -581,6 +578,10 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         part.makeRests(fillGaps=True, inPlace=True)
         part = part.makeMeasures()
 
+        # Fix 2: Insert chord symbols into the post-makeMeasures structural stream
+        for q_offset, chord_name in chord_symbols:
+            part.insert(Fraction(q_offset, 1), harmony.ChordSymbol(chord_name))
+
         # -------------------------------------------------------------------------
         # Deferred Spanner Engine (Executes safely inside established measures)
         # -------------------------------------------------------------------------
@@ -610,16 +611,19 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
                     el2 = next_q_ev.get("music_element")
                     if el2:
                         try:
-                            part.insert(el1.offset, spanner.Glissando([el1, el2]) if has_slide else spanner.Slur([el1, el2]))
+                            # Fix 1: Use global offset in hierarchy to prevent displacement
+                            part.insert(el1.getOffsetInHierarchy(part), spanner.Glissando([el1, el2]) if has_slide else spanner.Slur([el1, el2]))
                         except Exception:
                             pass
 
-        for el in part.flatten().notesAndRests:
-            if not el.duration.type or el.duration.type == 'unrepresentable':
-                if el.duration.quarterLength == 0:
-                    el.duration.type = 'zero'
-                else:
-                    el.duration.type = music21.duration.quarterLengthToClosestType(el.duration.quarterLength)
+        # Fix 3: Clean up durations directly on measures instead of temporary flattened stream
+        for m in part.getElementsByClass(stream.Measure):
+            for el in m.notesAndRests:
+                if not el.duration.type or el.duration.type == 'unrepresentable':
+                    if el.duration.quarterLength == 0:
+                        el.duration.type = 'zero'
+                    else:
+                        el.duration.type = music21.duration.quarterLengthToClosestType(el.duration.quarterLength)
 
         part.makeNotation(inPlace=True)
         sc.append(part)
