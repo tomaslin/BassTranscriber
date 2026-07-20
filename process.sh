@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Bass Transcription Pipeline (M1 Optimized) - Articulation & Ergonomics Mod
+# Bass Transcription Pipeline (M1 Optimized) - Full Bass Audit Mod
 # Usage: ./process.sh <path_to_stems_folder> [--tuning <tuning_type>] [--genre <genre_name>]
 # ==============================================================================
 
@@ -28,6 +28,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ ${#STEMS_DIRS[@]} -eq 0 ]; then
+    echo "Error: No stem directories provided."
     exit 1
 fi
 
@@ -41,6 +42,7 @@ if command -v python3.11 &> /dev/null; then
 elif command -v python3 &> /dev/null; then
     PY_CMD="python3"
 else
+    echo "Error: Python 3 not found."
     exit 1
 fi
 
@@ -100,42 +102,79 @@ from scipy.signal import butter, filtfilt
 from basic_pitch.inference import predict as bp_predict
 from music21 import instrument, clef, metadata, tempo, stream, note, chord, meter, key, articulations, pitch, spanner, expressions, harmony, dynamics
 
+# Bass-focused subgenre registry
 SUBGENRE_REGISTRY = {
-    "metal": {"low_cut": 30, "high_cut": 2500, "onset_threshold": 0.70, "frame_threshold": 0.40, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.03},
-    "rock": {"low_cut": 50, "high_cut": 2000, "onset_threshold": 0.60, "frame_threshold": 0.45, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.04},
-    "salsa": {"low_cut": 40, "high_cut": 1200, "onset_threshold": 0.65, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.05},
-    "funk": {"low_cut": 30, "high_cut": 4000, "onset_threshold": 0.65, "frame_threshold": 0.45, "minimum_note_length": 0.04, "legato_gap_tolerance": 0.02},
-    "jazz": {"low_cut": 40, "high_cut": 1500, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.07, "legato_gap_tolerance": 0.05},
-    "swing": {"low_cut": 40, "high_cut": 1200, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.05},
-    "reggae": {"low_cut": 25, "high_cut": 500, "onset_threshold": 0.45, "frame_threshold": 0.60, "minimum_note_length": 0.10, "legato_gap_tolerance": 0.08},
-    "electronic": {"low_cut": 20, "high_cut": 4500, "onset_threshold": 0.65, "frame_threshold": 0.40, "minimum_note_length": 0.03, "legato_gap_tolerance": 0.02},
-    "rnb": {"low_cut": 35, "high_cut": 1000, "onset_threshold": 0.50, "frame_threshold": 0.50, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.06},
-    "country": {"low_cut": 40, "high_cut": 1000, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.04},
-    "punk": {"low_cut": 50, "high_cut": 3000, "onset_threshold": 0.65, "frame_threshold": 0.45, "minimum_note_length": 0.04, "legato_gap_tolerance": 0.03},
-    "house": {"low_cut": 25, "high_cut": 1500, "onset_threshold": 0.65, "frame_threshold": 0.45, "minimum_note_length": 0.04, "legato_gap_tolerance": 0.02},
-    "disco": {"low_cut": 40, "high_cut": 3000, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.04},
-    "synthwave": {"low_cut": 20, "high_cut": 4500, "onset_threshold": 0.60, "frame_threshold": 0.40, "minimum_note_length": 0.03, "legato_gap_tolerance": 0.02},
-    "reggaeton": {"low_cut": 25, "high_cut": 800, "onset_threshold": 0.50, "frame_threshold": 0.55, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.05},
-    "afrobeats": {"low_cut": 35, "high_cut": 2000, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.06},
-    "bachata": {"low_cut": 40, "high_cut": 1000, "onset_threshold": 0.65, "frame_threshold": 0.50, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.03},
-    "zouk": {"low_cut": 30, "high_cut": 1000, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.06},
-    "blues": {"low_cut": 45, "high_cut": 1500, "onset_threshold": 0.50, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.05},
-    "bossanova": {"low_cut": 40, "high_cut": 1200, "onset_threshold": 0.55, "frame_threshold": 0.55, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.06},
-    "hiphop": {"low_cut": 20, "high_cut": 800, "onset_threshold": 0.40, "frame_threshold": 0.60, "minimum_note_length": 0.10, "legato_gap_tolerance": 0.08},
-    "dnb": {"low_cut": 20, "high_cut": 3000, "onset_threshold": 0.60, "frame_threshold": 0.50, "minimum_note_length": 0.03, "legato_gap_tolerance": 0.02},
-    "pop": {"low_cut": 35, "high_cut": 2000, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.04},
-    "ska": {"low_cut": 45, "high_cut": 2500, "onset_threshold": 0.65, "frame_threshold": 0.40, "minimum_note_length": 0.04, "legato_gap_tolerance": 0.02},
-    "classical": {"low_cut": 30, "high_cut": 1500, "onset_threshold": 0.30, "frame_threshold": 0.65, "minimum_note_length": 0.15, "legato_gap_tolerance": 0.10},
-    "none": {"low_cut": 40, "high_cut": 800, "onset_threshold": 0.50, "frame_threshold": 0.50, "minimum_note_length": 0.07, "legato_gap_tolerance": 0.05}
+    "metal":      {"low_cut": 30, "high_cut": 4500, "onset_threshold": 0.65, "frame_threshold": 0.40, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.03, "allow_chords": True,  "pos_center": 3, "open_pref": 0.8, "allowed_intervals": [7, 12],     "kick_lock_weight": 0.85, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.25},
+    "punk":       {"low_cut": 50, "high_cut": 4500, "onset_threshold": 0.65, "frame_threshold": 0.45, "minimum_note_length": 0.04, "legato_gap_tolerance": 0.03, "allow_chords": True,  "pos_center": 3, "open_pref": 0.8, "allowed_intervals": [7, 12],     "kick_lock_weight": 0.90, "swing_ratio": 0.50, "slide_threshold_cents": 100, "ghost_note_ratio": 0.20},
+    "doom":       {"low_cut": 18, "high_cut": 1500, "onset_threshold": 0.40, "frame_threshold": 0.50, "minimum_note_length": 0.20, "legato_gap_tolerance": 0.10, "allow_chords": True,  "pos_center": 2, "open_pref": 0.9, "allowed_intervals": [7, 12],     "kick_lock_weight": 0.50, "swing_ratio": 0.50, "slide_threshold_cents": 200, "ghost_note_ratio": 0.20},
+    "rock":       {"low_cut": 40, "high_cut": 3000, "onset_threshold": 0.60, "frame_threshold": 0.45, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.04, "allow_chords": True,  "pos_center": 5, "open_pref": 0.5, "allowed_intervals": [7, 12],     "kick_lock_weight": 0.80, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.30},
+    "math_rock":  {"low_cut": 50, "high_cut": 4800, "onset_threshold": 0.40, "frame_threshold": 0.40, "minimum_note_length": 0.03, "legato_gap_tolerance": 0.02, "allow_chords": True,  "pos_center": 7, "open_pref": 0.1, "allowed_intervals": [7, 12, 15, 16], "kick_lock_weight": 0.60, "swing_ratio": 0.50, "slide_threshold_cents": 100, "ghost_note_ratio": 0.35},
+    "funk":       {"low_cut": 30, "high_cut": 4000, "onset_threshold": 0.65, "frame_threshold": 0.45, "minimum_note_length": 0.04, "legato_gap_tolerance": 0.02, "allow_chords": True,  "pos_center": 4, "open_pref": 0.8, "allowed_intervals": [12, 15, 16, 19],"kick_lock_weight": 0.85, "swing_ratio": 0.55, "slide_threshold_cents": 150, "ghost_note_ratio": 0.45},
+    "disco":      {"low_cut": 40, "high_cut": 3500, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.04, "allow_chords": True,  "pos_center": 5, "open_pref": 0.6, "allowed_intervals": [12, 15, 16],"kick_lock_weight": 0.90, "swing_ratio": 0.52, "slide_threshold_cents": 150, "ghost_note_ratio": 0.30},
+    "jazz":       {"low_cut": 40, "high_cut": 1800, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.07, "legato_gap_tolerance": 0.05, "allow_chords": True,  "pos_center": 7, "open_pref": 0.0, "allowed_intervals": [12, 15, 16],"kick_lock_weight": 0.30, "swing_ratio": 0.66, "slide_threshold_cents": 120, "ghost_note_ratio": 0.40},
+    "swing":      {"low_cut": 40, "high_cut": 1800, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.05, "allow_chords": True,  "pos_center": 7, "open_pref": 0.0, "allowed_intervals": [12, 15, 16],"kick_lock_weight": 0.30, "swing_ratio": 0.66, "slide_threshold_cents": 120, "ghost_note_ratio": 0.40},
+    "motown":     {"low_cut": 40, "high_cut": 1500, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.06, "allow_chords": False, "pos_center": 3, "open_pref": 0.2, "allowed_intervals": [12],        "kick_lock_weight": 0.75, "swing_ratio": 0.58, "slide_threshold_cents": 120, "ghost_note_ratio": 0.35},
+    "reggae":     {"low_cut": 25, "high_cut": 350,  "onset_threshold": 0.45, "frame_threshold": 0.60, "minimum_note_length": 0.12, "legato_gap_tolerance": 0.08, "allow_chords": False, "pos_center": 2, "open_pref": 0.2, "allowed_intervals": [12],        "kick_lock_weight": 0.70, "swing_ratio": 0.58, "slide_threshold_cents": 150, "ghost_note_ratio": 0.20},
+    "trap":       {"low_cut": 18, "high_cut": 1200, "onset_threshold": 0.45, "frame_threshold": 0.55, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.04, "allow_chords": False, "pos_center": 5, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.95, "swing_ratio": 0.50, "slide_threshold_cents": 200, "ghost_note_ratio": 0.15},
+    "timba":      {"low_cut": 40, "high_cut": 2000, "onset_threshold": 0.60, "frame_threshold": 0.50, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.04, "allow_chords": False, "pos_center": 5, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.60, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.40},
+    "salsa":      {"low_cut": 40, "high_cut": 1500, "onset_threshold": 0.65, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.05, "allow_chords": False, "pos_center": 5, "open_pref": 0.4, "allowed_intervals": [12],        "kick_lock_weight": 0.60, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.30},
+    "electronic": {"low_cut": 20, "high_cut": 4500, "onset_threshold": 0.65, "frame_threshold": 0.40, "minimum_note_length": 0.03, "legato_gap_tolerance": 0.02, "allow_chords": False, "pos_center": 5, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.90, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.20},
+    "rnb":        {"low_cut": 35, "high_cut": 1200, "onset_threshold": 0.50, "frame_threshold": 0.50, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.06, "allow_chords": False, "pos_center": 5, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.80, "swing_ratio": 0.55, "slide_threshold_cents": 120, "ghost_note_ratio": 0.35},
+    "country":    {"low_cut": 40, "high_cut": 1500, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.04, "allow_chords": False, "pos_center": 3, "open_pref": 0.7, "allowed_intervals": [12],        "kick_lock_weight": 0.80, "swing_ratio": 0.50, "slide_threshold_cents": 120, "ghost_note_ratio": 0.25},
+    "house":      {"low_cut": 25, "high_cut": 1800, "onset_threshold": 0.65, "frame_threshold": 0.45, "minimum_note_length": 0.04, "legato_gap_tolerance": 0.02, "allow_chords": False, "pos_center": 5, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.95, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.20},
+    "synthwave":  {"low_cut": 20, "high_cut": 4500, "onset_threshold": 0.60, "frame_threshold": 0.40, "minimum_note_length": 0.03, "legato_gap_tolerance": 0.02, "allow_chords": False, "pos_center": 5, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.90, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.20},
+    "reggaeton":  {"low_cut": 25, "high_cut": 800,  "onset_threshold": 0.50, "frame_threshold": 0.55, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.05, "allow_chords": False, "pos_center": 4, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.85, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.25},
+    "afrobeats":  {"low_cut": 35, "high_cut": 2000, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.06, "legato_gap_tolerance": 0.06, "allow_chords": False, "pos_center": 5, "open_pref": 0.4, "allowed_intervals": [12],        "kick_lock_weight": 0.75, "swing_ratio": 0.52, "slide_threshold_cents": 150, "ghost_note_ratio": 0.35},
+    "bachata":    {"low_cut": 40, "high_cut": 1000, "onset_threshold": 0.65, "frame_threshold": 0.50, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.03, "allow_chords": False, "pos_center": 5, "open_pref": 0.4, "allowed_intervals": [12],        "kick_lock_weight": 0.70, "swing_ratio": 0.50, "slide_threshold_cents": 120, "ghost_note_ratio": 0.30},
+    "zouk":       {"low_cut": 30, "high_cut": 1000, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.06, "allow_chords": False, "pos_center": 5, "open_pref": 0.4, "allowed_intervals": [12],        "kick_lock_weight": 0.75, "swing_ratio": 0.55, "slide_threshold_cents": 120, "ghost_note_ratio": 0.30},
+    "blues":      {"low_cut": 45, "high_cut": 1800, "onset_threshold": 0.50, "frame_threshold": 0.50, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.05, "allow_chords": True,  "pos_center": 5, "open_pref": 0.5, "allowed_intervals": [12, 15, 16], "kick_lock_weight": 0.60, "swing_ratio": 0.62, "slide_threshold_cents": 150, "ghost_note_ratio": 0.35},
+    "bossanova":  {"low_cut": 40, "high_cut": 1500, "onset_threshold": 0.55, "frame_threshold": 0.55, "minimum_note_length": 0.08, "legato_gap_tolerance": 0.06, "allow_chords": True,  "pos_center": 5, "open_pref": 0.3, "allowed_intervals": [12, 15, 16], "kick_lock_weight": 0.50, "swing_ratio": 0.52, "slide_threshold_cents": 120, "ghost_note_ratio": 0.30},
+    "hiphop":     {"low_cut": 20, "high_cut": 800,  "onset_threshold": 0.40, "frame_threshold": 0.60, "minimum_note_length": 0.10, "legato_gap_tolerance": 0.08, "allow_chords": False, "pos_center": 3, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.85, "swing_ratio": 0.58, "slide_threshold_cents": 180, "ghost_note_ratio": 0.25},
+    "dnb":        {"low_cut": 20, "high_cut": 3000, "onset_threshold": 0.60, "frame_threshold": 0.50, "minimum_note_length": 0.03, "legato_gap_tolerance": 0.02, "allow_chords": False, "pos_center": 5, "open_pref": 0.3, "allowed_intervals": [12],        "kick_lock_weight": 0.90, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.20},
+    "pop":        {"low_cut": 35, "high_cut": 2000, "onset_threshold": 0.55, "frame_threshold": 0.50, "minimum_note_length": 0.05, "legato_gap_tolerance": 0.04, "allow_chords": True,  "pos_center": 5, "open_pref": 0.5, "allowed_intervals": [12, 15, 16], "kick_lock_weight": 0.80, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.30},
+    "ska":        {"low_cut": 45, "high_cut": 2500, "onset_threshold": 0.65, "frame_threshold": 0.40, "minimum_note_length": 0.04, "legato_gap_tolerance": 0.02, "allow_chords": True,  "pos_center": 5, "open_pref": 0.6, "allowed_intervals": [7, 12],     "kick_lock_weight": 0.85, "swing_ratio": 0.50, "slide_threshold_cents": 120, "ghost_note_ratio": 0.30},
+    "classical":  {"low_cut": 30, "high_cut": 1500, "onset_threshold": 0.30, "frame_threshold": 0.65, "minimum_note_length": 0.15, "legato_gap_tolerance": 0.10, "allow_chords": True,  "pos_center": 5, "open_pref": 0.1, "allowed_intervals": [7, 12, 15, 16], "kick_lock_weight": 0.20, "swing_ratio": 0.50, "slide_threshold_cents": 100, "ghost_note_ratio": 0.20},
+    "none":       {"low_cut": 30, "high_cut": 2500, "onset_threshold": 0.50, "frame_threshold": 0.50, "minimum_note_length": 0.07, "legato_gap_tolerance": 0.05, "allow_chords": True,  "pos_center": 5, "open_pref": 0.5, "allowed_intervals": [7, 12, 15, 16, 19], "kick_lock_weight": 0.50, "swing_ratio": 0.50, "slide_threshold_cents": 150, "ghost_note_ratio": 0.30}
 }
 
 def get_config(genre):
     return SUBGENRE_REGISTRY.get(genre, SUBGENRE_REGISTRY["none"])
 
+def extract_kick_transients(drums_wav_path, sr=22050):
+    if not drums_wav_path.exists(): return np.array([])
+    try:
+        y_d, _ = librosa.load(str(drums_wav_path), sr=sr, mono=True, res_type='soxr_hq')
+        if len(y_d) == 0: return np.array([])
+        nyq = 0.5 * sr
+        b, a = butter(4, [40 / nyq, min(100 / nyq, 0.99)], btype='band')
+        y_kick = filtfilt(b, a, y_d)
+        onset_env = librosa.onset.onset_strength(y=y_kick, sr=sr)
+        onset_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, backtrack=True)
+        return librosa.frames_to_time(onset_frames, sr=sr)
+    except Exception:
+        return np.array([])
+
+def apply_kick_lock(raw_notes, kick_times, weight, max_delta_sec=0.035):
+    if len(kick_times) == 0 or weight <= 0: return raw_notes
+    for note_obj in raw_notes:
+        idx = np.searchsorted(kick_times, note_obj.start)
+        candidates = []
+        if idx < len(kick_times): candidates.append(kick_times[idx])
+        if idx > 0: candidates.append(kick_times[idx - 1])
+        if candidates:
+            closest_kick = min(candidates, key=lambda k: abs(k - note_obj.start))
+            delta = closest_kick - note_obj.start
+            if abs(delta) <= max_delta_sec:
+                note_obj.start += delta * weight
+                if note_obj.end <= note_obj.start:
+                    note_obj.end = note_obj.start + 0.05
+    return raw_notes
+
 def auto_detect_profile(bass_wav_path, drums_wav_path):
     y_b, sr_b = librosa.load(str(bass_wav_path), sr=22050, mono=True, res_type='soxr_hq')
     if len(y_b) == 0: return "none", 120.0, y_b, sr_b
 
+    # Bass pre-filter at 800Hz to prevent high guitar overtones from distorting genre centroid
     b_feat, a_feat = butter(2, 800 / (sr_b / 2), btype='low')
     y_b_feat = filtfilt(b_feat, a_feat, y_b)
 
@@ -161,28 +200,21 @@ def auto_detect_profile(bass_wav_path, drums_wav_path):
 
     academic_profiles = {
         "metal":      {"bpm": (140, 25), "centroid": (600, 250), "density": (4.5, 1.5), "zcr": (0.070, 0.030)},
+        "doom":       {"bpm": (65, 15),  "centroid": (250, 100), "density": (1.2, 0.5), "zcr": (0.030, 0.015)},
+        "punk":       {"bpm": (160, 25), "centroid": (550, 180), "density": (4.8, 1.2), "zcr": (0.060, 0.025)},
         "rock":       {"bpm": (120, 20), "centroid": (450, 150), "density": (3.2, 1.0), "zcr": (0.040, 0.020)},
+        "math_rock":  {"bpm": (135, 20), "centroid": (500, 150), "density": (4.2, 1.2), "zcr": (0.045, 0.020)},
         "jazz":       {"bpm": (110, 30), "centroid": (250, 80),  "density": (2.8, 0.8), "zcr": (0.020, 0.010)},
         "swing":      {"bpm": (130, 30), "centroid": (200, 80),  "density": (3.0, 0.8), "zcr": (0.015, 0.010)},
-        "bachata":    {"bpm": (130, 15), "centroid": (180, 50),  "density": (4.1, 0.8), "zcr": (0.010, 0.005)},
+        "motown":     {"bpm": (100, 15), "centroid": (220, 70),  "density": (3.0, 0.8), "zcr": (0.020, 0.010)},
         "funk":       {"bpm": (105, 15), "centroid": (650, 200), "density": (4.0, 1.2), "zcr": (0.060, 0.020)},
-        "hiphop":     {"bpm": (90, 15),  "centroid": (150, 60),  "density": (2.2, 0.8), "zcr": (0.015, 0.010)},
+        "disco":      {"bpm": (115, 10), "centroid": (320, 100), "density": (3.2, 0.8), "zcr": (0.030, 0.015)},
         "reggae":     {"bpm": (75, 15),  "centroid": (130, 40),  "density": (1.8, 0.6), "zcr": (0.012, 0.008)},
+        "trap":       {"bpm": (140, 15), "centroid": (160, 50),  "density": (2.0, 0.8), "zcr": (0.015, 0.010)},
+        "hiphop":     {"bpm": (90, 15),  "centroid": (150, 60),  "density": (2.2, 0.8), "zcr": (0.015, 0.010)},
         "electronic": {"bpm": (128, 10), "centroid": (350, 150), "density": (3.5, 1.2), "zcr": (0.030, 0.020)},
         "house":      {"bpm": (124, 6),  "centroid": (280, 100), "density": (2.8, 0.7), "zcr": (0.025, 0.015)},
-        "disco":      {"bpm": (115, 10), "centroid": (320, 100), "density": (3.2, 0.8), "zcr": (0.030, 0.015)},
-        "synthwave":  {"bpm": (110, 15), "centroid": (300, 120), "density": (3.5, 1.0), "zcr": (0.025, 0.015)},
-        "rnb":        {"bpm": (85, 15),  "centroid": (200, 80),  "density": (2.4, 0.7), "zcr": (0.018, 0.010)},
-        "country":    {"bpm": (105, 20), "centroid": (300, 100), "density": (2.6, 0.7), "zcr": (0.025, 0.015)},
-        "punk":       {"bpm": (160, 25), "centroid": (550, 180), "density": (4.8, 1.2), "zcr": (0.060, 0.025)},
-        "reggaeton":  {"bpm": (95, 10),  "centroid": (180, 70),  "density": (2.8, 0.6), "zcr": (0.015, 0.010)},
-        "afrobeats":  {"bpm": (105, 10), "centroid": (220, 80),  "density": (3.0, 0.7), "zcr": (0.020, 0.010)},
-        "zouk":       {"bpm": (90, 10),  "centroid": (250, 100), "density": (3.5, 1.0), "zcr": (0.020, 0.010)},
-        "blues":      {"bpm": (80, 20),  "centroid": (280, 90),  "density": (2.2, 0.6), "zcr": (0.025, 0.015)},
-        "bossanova":  {"bpm": (130, 20), "centroid": (200, 70),  "density": (2.5, 0.6), "zcr": (0.015, 0.010)},
-        "dnb":        {"bpm": (174, 10), "centroid": (400, 150), "density": (4.5, 1.5), "zcr": (0.040, 0.020)},
-        "pop":        {"bpm": (115, 20), "centroid": (300, 100), "density": (2.8, 0.8), "zcr": (0.025, 0.015)},
-        "ska":        {"bpm": (140, 20), "centroid": (400, 120), "density": (4.2, 1.0), "zcr": (0.040, 0.020)},
+        "timba":      {"bpm": (95, 15),  "centroid": (280, 90),  "density": (3.8, 1.0), "zcr": (0.025, 0.015)},
         "salsa":      {"bpm": (90, 20),  "centroid": (300, 100), "density": (3.5, 1.0), "zcr": (0.025, 0.015)},
         "classical":  {"bpm": (80, 30),  "centroid": (200, 100), "density": (1.5, 0.8), "zcr": (0.015, 0.010)}
     }
@@ -243,76 +275,6 @@ def determine_tuning(min_pitch, requested_tuning):
     elif min_pitch < 23: return tunings["6-string"]
     return tunings["standard"]
 
-def apply_viterbi_fretboard(notes, baselines, string_names):
-    if not notes: return []
-    states = [(s_idx, f, base + f) for s_idx, base in enumerate(baselines) for f in range(0, 21)]
-    path_data = []
-    
-    for i, n in enumerate(notes):
-        pitch_val = int(round(n.pitch))
-        valid_states = [s for s in states if s[2] == pitch_val]
-        if not valid_states: valid_states = [(0, max(0, pitch_val - baselines[0]), pitch_val)]
-            
-        step_paths = {}
-        if i == 0:
-            for vs in valid_states:
-                pref_cost = abs(vs[1] - 5) * 0.2
-                if vs[1] > 12: pref_cost += (vs[1] - 12) * 1.0
-                step_paths[vs] = (pref_cost, [vs])
-        else:
-            prev_paths = path_data[-1]
-            for vs in valid_states:
-                best_cost, best_hist = float('inf'), []
-                
-                for ps, (prev_cost, prev_hist) in prev_paths.items():
-                    span = abs(vs[1] - ps[1])
-                    string_diff = abs(vs[0] - ps[0])
-                    
-                    if vs[1] == 0:
-                        fret_cost = 0.5
-                    elif span <= 4:
-                        fret_cost = span * 0.1
-                    else:
-                        fret_cost = 1.0 + ((span - 4) ** 1.8)
-                            
-                    if vs[1] > 12: fret_cost += (vs[1] - 12) * 0.5
-                    
-                    string_cost = string_diff * 0.3
-                    total_cost = prev_cost + fret_cost + string_cost
-                    
-                    if total_cost < best_cost:
-                        best_cost, best_hist = total_cost, prev_hist + [vs]
-                
-                step_paths[vs] = (best_cost, best_hist)
-        path_data.append(step_paths)
-        
-    best_final_state = min(path_data[-1].items(), key=lambda x: x[1][0])
-    return [(string_names[s[0]], s[1]) for s in best_final_state[1][1]]
-
-def extract_timbre(y_b, sr_b, start_time, end_time):
-    start_samp, end_samp = int(start_time * sr_b), int(end_time * sr_b)
-    if end_samp <= start_samp: return "normal"
-    segment = y_b[start_samp:end_samp]
-    if len(segment) < 512: return "normal"
-    
-    if np.mean(librosa.feature.rms(y=segment)) < 0.01: return "mute"
-    
-    S = np.abs(librosa.stft(segment))
-    flux = np.mean(librosa.onset.onset_strength(S=librosa.amplitude_to_db(S, ref=np.max), sr=sr_b)) if S.shape[1] > 1 else 0
-    rolloff = np.mean(librosa.feature.spectral_rolloff(y=segment, sr=sr_b, roll_percent=0.85))
-    
-    if flux > 3.0 and rolloff > 3500: return "pop"
-    if flux > 1.5 and rolloff > 2000: return "slap"
-    return "normal"
-
-def spell_pitch(midi_val, detected_key):
-    sharp_keys = ['G major', 'D major', 'A major', 'E major', 'B major', 'F# major', 'C# major', 'E minor', 'B minor', 'F# minor', 'C# minor', 'G# minor', 'D# minor', 'A# minor']
-    flat_keys = ['F major', 'B- major', 'E- major', 'A- major', 'D- major', 'G- major', 'C- major', 'D minor', 'G minor', 'C minor', 'F minor', 'B- minor', 'E- minor', 'A- minor']
-    p = pitch.Pitch(midi=int(round(midi_val)))
-    if detected_key in flat_keys and '#' in p.name: p = p.getEnharmonic()
-    elif detected_key in sharp_keys and '-' in p.name: p = p.getEnharmonic()
-    return p
-
 def extract_chords(y, sr, bpm):
     if len(y) == 0: return []
     try: chroma = librosa.feature.chroma_cqt(y=y, sr=sr, bins_per_octave=12)
@@ -348,19 +310,186 @@ def extract_chords(y, sr, bpm):
         
     return chords
 
+def spell_pitch_local(midi_val, global_key, active_chord_name=None):
+    p = pitch.Pitch(midi=int(round(midi_val)))
+    
+    if active_chord_name:
+        root_str = active_chord_name.replace('m', '').replace('7', '')
+        if root_str in ['F', 'B-', 'E-', 'A-', 'D-', 'G-']:
+            if '#' in p.name: return p.getEnharmonic()
+        elif root_str in ['G', 'D', 'A', 'E', 'B', 'F#', 'C#']:
+            if '-' in p.name: return p.getEnharmonic()
+
+    sharp_keys = ['G major', 'D major', 'A major', 'E major', 'B major', 'F# major', 'C# major', 'E minor', 'B minor', 'F# minor', 'C# minor', 'G# minor', 'D# minor', 'A# minor']
+    flat_keys = ['F major', 'B- major', 'E- major', 'A- major', 'D- major', 'G- major', 'C- major', 'D minor', 'G minor', 'C minor', 'F minor', 'B- minor', 'E- minor', 'A- minor']
+    
+    if global_key in flat_keys and '#' in p.name: p = p.getEnharmonic()
+    elif global_key in sharp_keys and '-' in p.name: p = p.getEnharmonic()
+    return p
+
+def apply_human_fretboard_ergonomics(notes, baselines, string_names, genre="rock"):
+    if not notes: return []
+    cfg = get_config(genre)
+    ideal_center = cfg.get("pos_center", 5)
+    open_pref = cfg.get("open_pref", 0.5)
+
+    states = [(s_idx, f, base + f) for s_idx, base in enumerate(baselines) for f in range(0, 21)]
+    path_data = []
+    
+    for i, n in enumerate(notes):
+        p_val = int(round(n["chord_pitches"][0])) if n.get("is_chord") else int(round(n["base"].pitch))
+        
+        valid_states = [s for s in states if s[2] == p_val]
+        if not valid_states: valid_states = [(0, max(0, p_val - baselines[0]), p_val)]
+            
+        step_paths = {}
+        if i == 0:
+            for vs in valid_states:
+                cost = abs(vs[1] - ideal_center) * 0.15
+                if vs[1] == 0: cost -= open_pref
+                step_paths[vs] = (cost, [vs])
+        else:
+            prev_paths = path_data[-1]
+            for vs in valid_states:
+                best_cost, best_hist = float('inf'), []
+                
+                for ps, (prev_cost, prev_hist) in prev_paths.items():
+                    fret_dist = abs(vs[1] - ps[1])
+                    string_diff = abs(vs[0] - ps[0])
+                    
+                    if vs[1] == 0:
+                        move_cost = 0.1 / max(0.1, open_pref)
+                    elif fret_dist <= 4:
+                        move_cost = fret_dist * 0.05
+                    else:
+                        move_cost = 0.8 + ((fret_dist - 4) ** 1.5)
+                            
+                    string_cost = (string_diff ** 1.8) * 0.35
+                    pos_bias = abs(vs[1] - ideal_center) * 0.05
+                    total_cost = prev_cost + move_cost + string_cost + pos_bias
+                    
+                    if total_cost < best_cost:
+                        best_cost, best_hist = total_cost, prev_hist + [vs]
+                
+                step_paths[vs] = (best_cost, best_hist)
+        path_data.append(step_paths)
+        
+    best_final_state = min(path_data[-1].items(), key=lambda x: x[1][0])
+    return [(string_names[s[0]], s[1]) for s in best_final_state[1][1]]
+
+def process_polyphony_and_chords(grid_groups, allow_chords=True, allowed_intervals=None):
+    """Enforces Low Interval Limit (LIL) for bass polyphony below E2 (MIDI 40)."""
+    if allowed_intervals is None:
+        allowed_intervals = [7, 12, 15, 16, 19]
+        
+    quantized_events = []
+    
+    for start_tick in sorted(grid_groups.keys()):
+        group = grid_groups[start_tick]
+        if len(group) == 1 or not allow_chords:
+            group.sort(key=lambda x: x["base"].velocity, reverse=True)
+            primary = group[0]
+            primary["is_chord"] = False
+            primary["group"] = [primary["base"]]
+            primary["staccato"] = False
+            quantized_events.append(primary)
+        else:
+            group.sort(key=lambda x: x["base"].velocity, reverse=True)
+            primary = group[0]
+            secondary = group[1]
+            
+            p1 = int(round(primary["base"].pitch))
+            p2 = int(round(secondary["base"].pitch))
+            interval = abs(p1 - p2)
+            min_note = min(p1, p2)
+            
+            # Low Interval Limit Check: If lower note is below E2 (MIDI 40), enforce allowed intervals strictly
+            is_valid_interval = interval in allowed_intervals if min_note < 40 else (interval in allowed_intervals or interval >= 5)
+            
+            if secondary["base"].velocity > (primary["base"].velocity * 0.60) and is_valid_interval:
+                primary["is_chord"] = True
+                primary["chord_pitches"] = sorted([p1, p2])
+                primary["group"] = [primary["base"], secondary["base"]]
+                primary["staccato"] = False
+                quantized_events.append(primary)
+            else:
+                primary["is_chord"] = False
+                primary["group"] = [primary["base"]]
+                primary["staccato"] = False
+                quantized_events.append(primary)
+                
+    return quantized_events
+
+def humanize_durations_and_articulations(quantized_events, bpm, min_q_len):
+    cleaned_events = []
+    beat_dur_sec = 60.0 / bpm
+    
+    for idx, q_ev in enumerate(quantized_events):
+        raw_dur_sec = q_ev["raw_end"] - q_ev["raw_start"]
+        q_dur_beats = float(q_ev["end"] - q_ev["start"])
+        fill_ratio = raw_dur_sec / max(0.01, (q_dur_beats * beat_dur_sec))
+        
+        if fill_ratio < 0.65:
+            q_ev["staccato"] = True
+        else:
+            q_ev["staccato"] = False
+
+        if raw_dur_sec < 0.05 and idx < len(quantized_events) - 1:
+            continue
+
+        if cleaned_events:
+            prev_clean_ev = cleaned_events[-1]
+            gap_beats = q_ev["start"] - prev_clean_ev["end"]
+            
+            if 0 < gap_beats <= Fraction(3, 4):
+                prev_clean_ev["end"] = q_ev["start"]
+                
+        cleaned_events.append(q_ev)
+        
+    return cleaned_events
+
+def extract_timbre(y_b, sr_b, start_time, end_time):
+    start_samp, end_samp = int(start_time * sr_b), int(end_time * sr_b)
+    if end_samp <= start_samp: return "normal"
+    segment = y_b[start_samp:end_samp]
+    if len(segment) < 512: return "normal"
+    
+    if np.mean(librosa.feature.rms(y=segment)) < 0.01: return "mute"
+    
+    S = np.abs(librosa.stft(segment))
+    flux = np.mean(librosa.onset.onset_strength(S=librosa.amplitude_to_db(S, ref=np.max), sr=sr_b)) if S.shape[1] > 1 else 0
+    rolloff = np.mean(librosa.feature.spectral_rolloff(y=segment, sr=sr_b, roll_percent=0.85))
+    
+    if flux > 3.0 and rolloff > 3500: return "pop"
+    if flux > 1.5 and rolloff > 2000: return "slap"
+    return "normal"
+
 def correct_octave_errors(raw_notes, y, sr):
+    """Uses YIN pitched search isolated to bass register (18Hz - 530Hz) to correct octave jumps."""
     corrected = []
     for n in raw_notes:
         start_s, end_s = int(n.start * sr), int(n.end * sr)
         if end_s - start_s > 2048:
             segment = y[start_s:end_s]
-            f0 = librosa.yin(segment, fmin=30, fmax=150, sr=sr)
+            f0 = librosa.yin(segment, fmin=18, fmax=530, sr=sr)
             median_f0 = np.nanmedian(f0)
             if median_f0 > 0:
                 est_midi = librosa.hz_to_midi(median_f0)
                 if n.pitch - est_midi > 8: n.pitch -= 12
         corrected.append(n)
     return corrected
+
+def safe_set_duration_type(dur_obj, quarter_length):
+    if quarter_length == 0:
+        dur_obj.type = 'zero'
+        return
+    res = music21.duration.quarterLengthToClosestType(quarter_length)
+    if isinstance(res, (list, tuple)):
+        dur_obj.type = res[0]
+        if len(res) > 1 and res[1]:
+            dur_obj.dots = 1
+    elif isinstance(res, str):
+        dur_obj.type = res
 
 def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, tuning, y_b, sr_b):
     cfg = get_config(genre)
@@ -373,13 +502,13 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
     k_tonic, k_mode = detected_key.split()
     sc.insert(0, key.Key(k_tonic, k_mode))
     
-    if genre in ['jazz', 'blues', 'hiphop', 'reggae', 'swing', 'zouk']:
+    if genre in ['jazz', 'blues', 'hiphop', 'reggae', 'swing', 'zouk', 'motown']:
         txt = expressions.TextExpression("Swing / Laid back")
         txt.placement = 'above'; sc.insert(0, txt)
-    elif genre in ['funk', 'disco', 'slap']:
+    elif genre in ['funk', 'disco', 'slap', 'timba']:
         txt = expressions.TextExpression("16th note groove")
         txt.placement = 'above'; sc.insert(0, txt)
-    elif genre in ['rock', 'metal', 'punk']:
+    elif genre in ['rock', 'metal', 'punk', 'doom', 'math_rock']:
         txt = expressions.TextExpression("Driving / Straight")
         txt.placement = 'above'; sc.insert(0, txt)
 
@@ -390,7 +519,7 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
     if len(raw_notes) > 0:
         avg_vel = np.median([ev.velocity for ev in raw_notes])
         vel_threshold = max(20, avg_vel * 0.40)
-        ghost_threshold = max(20, avg_vel * 0.35)
+        ghost_threshold = max(20, avg_vel * cfg.get("ghost_note_ratio", 0.35))
     else:
         vel_threshold, ghost_threshold = 30, 25
 
@@ -399,7 +528,8 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
 
     sanitized_raw_notes = []
     for ev in raw_notes:
-        if ev.pitch < 15 or ev.pitch > 72:
+        # Strict Bass Fundamental Guardrail: Discard any notes outside MIDI 18 (F#0) to MIDI 72 (C5)
+        if ev.pitch < 18 or ev.pitch > 72:
             continue
             
         duration = ev.end - ev.start
@@ -448,21 +578,12 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
     for q_ev in raw_quantized:
         grid_groups.setdefault(q_ev["start"], []).append(q_ev)
 
-    # -------------------------------------------------------------------------
-    # Strict Monophony Selection Pass (Stops vertical chords & stacked notes)
-    # -------------------------------------------------------------------------
-    quantized_events = []
-    for start_tick in sorted(grid_groups.keys()):
-        group = grid_groups[start_tick]
-        group.sort(key=lambda x: x["base"].velocity, reverse=True)
-        best_ev = group[0]
-        best_ev["group"] = [best_ev["base"]]
-        best_ev["staccato"] = False
-        quantized_events.append(best_ev)
+    quantized_events = process_polyphony_and_chords(
+        grid_groups,
+        allow_chords=cfg["allow_chords"],
+        allowed_intervals=cfg.get("allowed_intervals", [7, 12, 15, 16, 19])
+    )
 
-    # -------------------------------------------------------------------------
-    # Chronological Flattening Pass (Stops timeline overlap & multi-voice rests)
-    # -------------------------------------------------------------------------
     final_sanitized = []
     for q_ev in quantized_events:
         if not final_sanitized:
@@ -486,34 +607,15 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         final_sanitized.append(q_ev)
         
     quantized_events = final_sanitized
-
-    # -------------------------------------------------------------------------
-    # RHYTHMIC SMOOTHING & GAP CLOSING LAYER (Heals Disco/Pop Fragmentation)
-    # -------------------------------------------------------------------------
-    cleaned_quantized_events = []
-    for idx, q_ev in enumerate(quantized_events):
-        note_duration_sec = q_ev["raw_end"] - q_ev["raw_start"]
-        if note_duration_sec < 0.05 and idx < len(quantized_events) - 1:
-            continue
-
-        if cleaned_quantized_events:
-            prev_clean_ev = cleaned_quantized_events[-1]
-            gap_beats = q_ev["start"] - prev_clean_ev["end"]
-            
-            if 0 < gap_beats <= Fraction(3, 4):
-                prev_clean_ev["end"] = q_ev["start"]
-                
-        cleaned_quantized_events.append(q_ev)
-    quantized_events = cleaned_quantized_events
+    quantized_events = humanize_durations_and_articulations(quantized_events, bpm, min_q_len)
 
     if quantized_events:
-        min_pitch = min([q["base"].pitch for q in quantized_events])
+        min_pitch = min([q["chord_pitches"][0] if q.get("is_chord") else q["base"].pitch for q in quantized_events])
         baselines, string_names = determine_tuning(min_pitch, tuning)
-        optimal_fingerings = apply_viterbi_fretboard([q["base"] for q in quantized_events], baselines, string_names)
+        optimal_fingerings = apply_human_fretboard_ergonomics(quantized_events, baselines, string_names, genre=genre)
         for idx, q_ev in enumerate(quantized_events):
             q_ev["fingering"] = optimal_fingerings[idx]
 
-    # Context-Aware Legato Adjustment (Safely heals rounding anomalies within profiles)
     gap_tolerance_beats = Fraction(int(round(cfg["legato_gap_tolerance"] * (bpm / 60.0) * grid_subdiv)), grid_subdiv)
     for i in range(len(quantized_events) - 1):
         curr_ev = quantized_events[i]
@@ -540,18 +642,25 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
             last_dyn = d_str
 
     for idx, q_ev in enumerate(quantized_events):
-        event_group, base_ev = q_ev["group"], q_ev["base"]
+        base_ev = q_ev["base"]
         s_name, f_val = q_ev["fingering"]
 
         offset_val = q_ev["start"]
         q_length = q_ev["end"] - q_ev["start"]
-
-        p = spell_pitch(base_ev.pitch, detected_key)
-        music_element = note.Note(p)
         safe_q_length = max(min_q_len, q_length)
-        
+
+        meas_idx = int(offset_val // 4)
+        active_chord = chord_symbols[meas_idx][1] if meas_idx < len(chord_symbols) else None
+
+        if q_ev.get("is_chord"):
+            chord_pitches = [spell_pitch_local(p_val, detected_key, active_chord) for p_val in q_ev["chord_pitches"]]
+            music_element = chord.Chord(chord_pitches)
+        else:
+            p = spell_pitch_local(base_ev.pitch, detected_key, active_chord)
+            music_element = note.Note(p)
+
         music_element.duration.quarterLength = safe_q_length
-        music_element.duration.type = music21.duration.quarterLengthToClosestType(safe_q_length)
+        safe_set_duration_type(music_element.duration, safe_q_length)
         
         if q_ev["staccato"]:
             music_element.articulations.append(articulations.Staccato())
@@ -559,12 +668,14 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         timbre = extract_timbre(y_b, sr_b, base_ev.start, base_ev.end)
 
         if (base_ev.velocity < ghost_threshold and (base_ev.end - base_ev.start) < 0.08) or timbre == "mute":
-            music_element.notehead = 'x'
+            if isinstance(music_element, note.Note):
+                music_element.notehead = 'x'
 
         if timbre == "pop": music_element.addLyric('P')
         elif timbre == "slap": music_element.addLyric('T')
 
-        string_num = {"G": 1, "D": 2, "A": 3, "E": 4, "B": 5, "C": 6}.get(s_name, 4)
+        # Dynamically locate active string index (1 to N) based on tuning configuration
+        string_num = string_names.index(s_name) + 1 if s_name in string_names else 4
         music_element.articulations.append(articulations.StringIndication(string_num))
         music_element.articulations.append(articulations.FretIndication(f_val))
 
@@ -578,13 +689,11 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         part.makeRests(fillGaps=True, inPlace=True)
         part = part.makeMeasures()
 
-        # Fix 2: Insert chord symbols into the post-makeMeasures structural stream
         for q_offset, chord_name in chord_symbols:
             part.insert(Fraction(q_offset, 1), harmony.ChordSymbol(chord_name))
 
-        # -------------------------------------------------------------------------
-        # Deferred Spanner Engine (Executes safely inside established measures)
-        # -------------------------------------------------------------------------
+        slide_cents_limit = cfg.get("slide_threshold_cents", 150)
+
         for idx, q_ev in enumerate(quantized_events):
             el1 = q_ev.get("music_element")
             if not el1:
@@ -594,7 +703,7 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
             has_slide, has_vibrato = False, False
             if bends_in_note:
                 max_b, min_b = max([pb.pitch for pb in bends_in_note]), min([pb.pitch for pb in bends_in_note])
-                if max_b > 1000 or min_b < -1000: has_slide = True
+                if (max_b - min_b) > slide_cents_limit: has_slide = True
                 if (q_ev["raw_end"] - q_ev["raw_start"]) > 0.4 and (max_b - min_b) > 200:
                     bend_vals = [pb.pitch for pb in bends_in_note]
                     diffs = [bend_vals[i] - bend_vals[i-1] for i in range(1, len(bend_vals))]
@@ -611,19 +720,14 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
                     el2 = next_q_ev.get("music_element")
                     if el2:
                         try:
-                            # Fix 1: Use global offset in hierarchy to prevent displacement
                             part.insert(el1.getOffsetInHierarchy(part), spanner.Glissando([el1, el2]) if has_slide else spanner.Slur([el1, el2]))
                         except Exception:
                             pass
 
-        # Fix 3: Clean up durations directly on measures instead of temporary flattened stream
         for m in part.getElementsByClass(stream.Measure):
             for el in m.notesAndRests:
                 if not el.duration.type or el.duration.type == 'unrepresentable':
-                    if el.duration.quarterLength == 0:
-                        el.duration.type = 'zero'
-                    else:
-                        el.duration.type = music21.duration.quarterLengthToClosestType(el.duration.quarterLength)
+                    safe_set_duration_type(el.duration, el.duration.quarterLength)
 
         part.makeNotation(inPlace=True)
         sc.append(part)
@@ -652,7 +756,11 @@ def main():
     detected_key = estimate_harmonic_key(y_b, sr_b)
 
     nyq = 0.5 * sr_b
-    b, a = butter(6, 1200 / nyq, btype='low')
+    low_c = max(10, cfg["low_cut"])
+    high_c = min(cfg["high_cut"], nyq - 100)
+    if high_c <= low_c: high_c = low_c + 500
+    
+    b, a = butter(4, [low_c / nyq, high_c / nyq], btype='bandpass')
     y_b_filtered = filtfilt(b, a, y_b)
 
     if np.max(np.abs(y_b_filtered)) > 0:
@@ -676,6 +784,10 @@ def main():
         raw_notes = bass_midi.instruments[0].notes
         pitch_bends = bass_midi.instruments[0].pitch_bends
         
+        if drums_wav.exists():
+            kick_transients = extract_kick_transients(drums_wav, sr=22050)
+            raw_notes = apply_kick_lock(raw_notes, kick_transients, weight=cfg.get("kick_lock_weight", 0.50))
+
         raw_notes = correct_octave_errors(raw_notes, y_b, sr_b)
         
     except Exception:
