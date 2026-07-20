@@ -1,14 +1,14 @@
 #!/bin/bash
 set -x
 # split.sh
-# Usage: ./split.sh path/to/input.mp3
+# Usage: ./split.sh path/to/file1.mp3 path/to/file2.wav path/to/file3.mp3
 
 set -euo pipefail
 
-INPUT_AUDIO="${1:-}"
-if [ -z "$INPUT_AUDIO" ]; then
-    echo "❌ Error: Missing input audio file target."
-    echo "Usage: $0 <path_to_audio_file.mp3>"
+# Check if at least one argument was passed
+if [ $# -eq 0 ]; then
+    echo "❌ Error: Missing input audio file target(s)."
+    echo "Usage: $0 <path_to_audio_file1.mp3> [path_to_audio_file2.mp3 ...]"
     exit 1
 fi
 
@@ -33,12 +33,21 @@ import soundfile as sf
 import tempfile
 from demucs_mlx.api import Separator, save_audio
 
-def main():
-    audio_path = Path(sys.argv[1]).resolve()
+def process_file(file_path_str, separator):
+    audio_path = Path(file_path_str).resolve()
+    
+    if not audio_path.exists():
+        print(f"❌ Error: File not found: {audio_path}")
+        return
+
     out_dir = Path(f"./stems_{audio_path.stem}").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"\n[1/2] Loading audio file into memory...")
+    print(f"\n==================================================")
+    print(f"🎵 Processing: {audio_path.name}")
+    print(f"==================================================")
+    print(f"[1/2] Loading audio file into memory...")
+    
     # mono=False ensures we preserve standard stereo layout
     y, sr = librosa.load(audio_path, sr=None, mono=False)
     
@@ -52,7 +61,6 @@ def main():
     print(f"Loaded audio track: {y.shape[0]} channels at {sr}Hz.")
     print(f"[2/2] Processing source separation in sequential {chunk_length_sec}-second chunks...")
     
-    separator = Separator(model="htdemucs_6s")
     accumulated_stems = {}
     
     # Slice along the time domain
@@ -88,9 +96,21 @@ def main():
         save_audio(full_stem, stem_path, samplerate=separator.samplerate)
         print(f"Saved complete stem: {stem_path}")
 
+def main():
+    # Instantiate the separator once so it doesn't reload for every file
+    print("Initializing Demucs separator model...")
+    separator = Separator(model="htdemucs_6s")
+    
+    # Process all file arguments passed from Bash
+    for file_path in sys.argv[1:]:
+        try:
+            process_file(file_path, separator)
+        except Exception as e:
+            print(f"❌ Failed to process {file_path}: {e}")
+
 if __name__ == "__main__":
     main()
 EOF
 
-# Execute the chunking pipeline
-python run_split.py "$INPUT_AUDIO"
+# Execute the chunking pipeline passing all provided arguments ($@)
+python run_split.py "$@"
