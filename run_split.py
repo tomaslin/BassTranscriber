@@ -6,12 +6,21 @@ import soundfile as sf
 import tempfile
 from demucs_mlx.api import Separator, save_audio
 
-def main():
-    audio_path = Path(sys.argv[1]).resolve()
+def process_file(file_path_str, separator):
+    audio_path = Path(file_path_str).resolve()
+    
+    if not audio_path.exists():
+        print(f"❌ Error: File not found: {audio_path}")
+        return
+
     out_dir = Path(f"./stems_{audio_path.stem}").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"\n[1/2] Loading audio file into memory...")
+    print(f"\n==================================================")
+    print(f"🎵 Processing: {audio_path.name}")
+    print(f"==================================================")
+    print(f"[1/2] Loading audio file into memory...")
+    
     # mono=False ensures we preserve standard stereo layout
     y, sr = librosa.load(audio_path, sr=None, mono=False)
     
@@ -25,7 +34,6 @@ def main():
     print(f"Loaded audio track: {y.shape[0]} channels at {sr}Hz.")
     print(f"[2/2] Processing source separation in sequential {chunk_length_sec}-second chunks...")
     
-    separator = Separator(model="htdemucs_6s")
     accumulated_stems = {}
     
     # Slice along the time domain
@@ -60,6 +68,18 @@ def main():
         stem_path = out_dir / f"{name}.wav"
         save_audio(full_stem, stem_path, samplerate=separator.samplerate)
         print(f"Saved complete stem: {stem_path}")
+
+def main():
+    # Instantiate the separator once so it doesn't reload for every file
+    print("Initializing Demucs separator model...")
+    separator = Separator(model="htdemucs_6s")
+    
+    # Process all file arguments passed from Bash
+    for file_path in sys.argv[1:]:
+        try:
+            process_file(file_path, separator)
+        except Exception as e:
+            print(f"❌ Failed to process {file_path}: {e}")
 
 if __name__ == "__main__":
     main()
