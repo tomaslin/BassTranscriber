@@ -275,8 +275,8 @@ def process_folder(stem_folder, generate_all_levels=False, custom_output_dir=Non
             snapped_layer.append((start, end, s_pitch, amp, bends, tag, flux))
 
         hmm = ErgonomicFretboardHMMSolver(tuning_type=tuning)
-        fretboard_path, rakes, legatos = hmm.solve(snapped_layer)
-        
+        fretboard_path, rakes, legatos, _ = hmm.solve(snapped_layer)
+       
         sec_per_quarter = 60.0 / bpm
         first_onset = snapped_layer[0][0] if snapped_layer else 0.0
         
