@@ -1,3 +1,4 @@
+# audio_engine.py
 import re
 import numpy as np
 import librosa
@@ -211,3 +212,31 @@ def pyin_predict_notes(audio_y, sr, conf_threshold=0.30):
                 in_note, pitch_buf, conf_buf = False, [], []
 
     return raw_notes
+
+
+def estimate_beat_grid(drums_y, sr):
+    """
+    Returns an array of beat timestamps (in seconds) and an initial instantaneous BPM array.
+    """
+    tempo_val, beat_times = librosa.beat.beat_track(y=drums_y, sr=sr, units='time')
+    
+    if len(beat_times) < 2:
+        # Fallback for ultra-short clips
+        return np.array([0.0, 0.5, 1.0, 1.5]), np.array([120.0, 120.0, 120.0, 120.0])
+
+    # Prepend backwards to handle pickup notes occurring before the first drum transient
+    if beat_times[0] > 0.1:
+        first_interval = beat_times[1] - beat_times[0] if len(beat_times) > 1 else 0.5
+        pre_beats = np.arange(beat_times[0] - first_interval, 0.0, -first_interval)[::-1]
+        if len(pre_beats) == 0: pre_beats = np.array([0.0])
+        beat_times = np.concatenate((pre_beats, beat_times))
+
+    beat_durations = np.diff(beat_times)
+    beat_durations = np.clip(beat_durations, 0.15, 2.5)
+    instant_bpms = 60.0 / beat_durations
+    
+    # Smooth BPMs to avoid tracking jitter over-cluttering the score tempo maps
+    smoothed_bpms = median_filter(instant_bpms, size=5)
+    smoothed_bpms = np.append(smoothed_bpms, smoothed_bpms[-1])
+
+    return beat_times, smoothed_bpms
