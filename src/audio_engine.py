@@ -81,10 +81,10 @@ def detect_key_signature(audio_y, sr, parsed_key=None):
 def snap_pitch_to_scale(midi_val, key_obj, level=5):
     """
     Snaps pitch to key scale degrees.
-    Enforces standard electric bass octave folding (MIDI 23-55).
+    Enforces electric bass octave folding (MIDI 23-67).
     """
-    # Enforce octave folding for bass register
-    while midi_val > 55:
+    # Enforce octave folding for bass register (up to G4 / MIDI 67)
+    while midi_val > 67:
         midi_val -= 12
     while midi_val < 23:
         midi_val += 12
@@ -111,20 +111,15 @@ def snap_pitch_to_scale(midi_val, key_obj, level=5):
 
 
 def get_key_aware_pitch(midi_val, key_obj):
-    p = pitch.Pitch(midi=midi_val)
+    """
+    Uses music21 circle-of-fifths key rules to automatically determine scale degree spelling.
+    """
     if key_obj is None:
-        return p
-
-    sharps = key_obj.sharps
-    if sharps > 0 and p.accidental and p.accidental.name == 'flat':
-        p = p.getEnharmonic()
-    elif sharps < 0 and p.accidental and p.accidental.name == 'sharp':
-        p = p.getEnharmonic()
-
-    if sharps == 4 and p.name == 'Eb': p = p.getEnharmonic()
-    elif sharps == -1 and p.name == 'G#': p = p.getEnharmonic()
-    elif sharps == 3 and p.name == 'Bb': p = p.getEnharmonic()
-    return p
+        return pitch.Pitch(midi=midi_val)
+    try:
+        return key_obj.getPitchFromMidi(midi_val)
+    except Exception:
+        return pitch.Pitch(midi=midi_val)
 
 
 def purge_audio_artifacts(raw_notes, max_micro_rest=0.22, min_valid_duration=0.075):

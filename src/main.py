@@ -135,7 +135,7 @@ def filter_performance_for_level(layer, level, beats, is_compound, bpm, genre_co
     return filtered
 
 
-def process_folder(stem_folder, generate_all_levels=False):
+def process_folder(stem_folder, generate_all_levels=False, custom_output_dir=None, profile='HIGH_FIDELITY', level=None):
     artist_name, song_title, base_name, parsed_key_str, resolved_genre, genre_config = parse_metadata_from_path(stem_folder)
 
     print(f"\n=======================================================")
@@ -147,12 +147,19 @@ def process_folder(stem_folder, generate_all_levels=False):
     bass_path = os.path.join(stem_folder, 'bass.wav')
     drums_path = os.path.join(stem_folder, 'drums.wav')
 
-    if not os.path.exists(bass_path) or not os.path.exists(drums_path):
-        print(f"SKIPPED: Missing bass.wav or drums.wav")
+    if not os.path.exists(bass_path):
+        print(f"SKIPPED: Missing bass.wav")
         return
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = os.path.join(os.path.dirname(script_dir), 'output_bass')
+    if not os.path.exists(drums_path):
+        print(f"[INFO] No drums.wav detected. Falling back to bass track for beat estimation.")
+        drums_path = bass_path
+
+    if custom_output_dir:
+        output_dir = custom_output_dir
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_dir = os.path.join(os.path.dirname(script_dir), 'output_bass')
     os.makedirs(output_dir, exist_ok=True)
 
     sr = 22050
@@ -180,10 +187,10 @@ def process_folder(stem_folder, generate_all_levels=False):
     
     corrected_notes = []
     for start, end, midi_pitch, amp, bends in raw_pyin_notes:
-        # Enforce folding to electric bass octave range (MIDI 23-55)
-        while midi_pitch > 55: midi_pitch -= 12
+        # Enforce folding to electric bass octave range (MIDI 23-67)
+        while midi_pitch > 67: midi_pitch -= 12
         while midi_pitch < 23: midi_pitch += 12
-        corrected_notes.append((start, end, max(23, min(55, int(round(midi_pitch)))), float(amp), bends))
+        corrected_notes.append((start, end, max(23, min(67, int(round(midi_pitch)))), float(amp), bends))
 
     print("[Phase 3/4] Purging Audio Artifacts & Micro-Rests...")
     purged_notes = purge_audio_artifacts(corrected_notes, max_micro_rest=0.22, min_valid_duration=0.075)
@@ -215,7 +222,9 @@ def process_folder(stem_folder, generate_all_levels=False):
     performance_layer.sort(key=lambda x: x[0])
 
     tempo_val, beats = librosa.beat.beat_track(y=drums_y, sr=sr, units='time')
-    bpm = 120.0 if float(np.atleast_1d(tempo_val)[0]) <= 0 else float(np.atleast_1d(tempo_val)[0])
+    raw_bpm = float(np.atleast_1d(tempo_val)[0])
+    # Integer tempo locking to eliminate floating-point sub-BPM drift
+    bpm = float(int(round(raw_bpm))) if raw_bpm > 0 else 120.0
     avg_interval = float(np.mean(np.diff(beats))) if len(beats) > 1 else 0.5
 
     is_compound = (avg_interval > 0.65) and (bpm < 95.0)
@@ -233,7 +242,16 @@ def process_folder(stem_folder, generate_all_levels=False):
     lowest_pitch = min(valid_pitches) if valid_pitches else 40
     tuning = '5_string_low_b' if lowest_pitch <= 25 else '4_string_drop_d' if lowest_pitch <= 27 else '4_string_standard'
 
-    target_levels = range(6) if generate_all_levels else [5]
+    if level is not None:
+        selected_level = level
+    elif profile == 'FAST_DRAFT':
+        selected_level = 2
+    elif profile == 'MIDI_TABS':
+        selected_level = 4
+    else:
+        selected_level = 5
+
+    target_levels = range(6) if generate_all_levels else [selected_level]
 
     for level in target_levels:
         if generate_all_levels:
@@ -250,16 +268,22 @@ def process_folder(stem_folder, generate_all_levels=False):
             print(f"        [Skipping] Level {level} yielded no notes.")
             continue
 
+        # Pitch-snapping execution order fix: Snap pitches BEFORE running HMM solver
+        snapped_layer = []
+        for start, end, p_val, amp, bends, tag, flux in level_layer:
+            s_pitch = snap_pitch_to_scale(p_val, detected_key, level=level)
+            snapped_layer.append((start, end, s_pitch, amp, bends, tag, flux))
+
         hmm = ErgonomicFretboardHMMSolver(tuning_type=tuning)
-        fretboard_path, rakes, legatos = hmm.solve(level_layer)
+        fretboard_path, rakes, legatos = hmm.solve(snapped_layer)
         
         sec_per_quarter = 60.0 / bpm
-        first_onset = level_layer[0][0] if level_layer else 0.0
+        first_onset = snapped_layer[0][0] if snapped_layer else 0.0
         
         quantized_timeline = []
         current_q = fractions.Fraction(0, 1)
 
-        for i, (start, end, pitch_val, amp, bends, tag, flux_val) in enumerate(level_layer):
+        for i, (start, end, pitch_val, amp, bends, tag, flux_val) in enumerate(snapped_layer):
             v_start = max(0.0, (start - first_onset) - pocket_delta)
             dur_s = max(0.05, end - start)
             start_q = fractions.Fraction(int(round((v_start / sec_per_quarter) * 4)), 4)
@@ -274,8 +298,7 @@ def process_folder(stem_folder, generate_all_levels=False):
                 current_q = start_q
 
             s_idx, f_val = fretboard_path[i] if i < len(fretboard_path) else (None, None)
-            clean_midi = snap_pitch_to_scale(pitch_val, detected_key, level=level)
-            exact_midi = (hmm.strings[s_idx] + f_val) if (s_idx is not None and f_val is not None) else clean_midi
+            exact_midi = (hmm.strings[s_idx] + f_val) if (s_idx is not None and f_val is not None) else pitch_val
 
             if s_idx is None or f_val is None:
                 valid_pos = hmm.get_valid_positions(exact_midi)
@@ -321,10 +344,18 @@ def process_folder(stem_folder, generate_all_levels=False):
                         curr_measure, m_fill, space = stream.Measure(number=m_num), fractions.Fraction(0, 1), m_capacity
 
                     take_dur = min(rem_dur, space)
-                    for sub_dur in decompose_duration_engraver_rules(take_dur, m_fill, m_capacity, is_compound):
-                        r = note.Rest(quarterLength=float(sub_dur))
+                    # Centered whole-measure rest formatting rule
+                    if take_dur == m_capacity and m_fill == 0:
+                        r = note.Rest()
+                        r.quarterLength = float(m_capacity)
+                        r.fullMeasure = True
                         r.voice = 1
                         curr_measure.append(r)
+                    else:
+                        for sub_dur in decompose_duration_engraver_rules(take_dur, m_fill, m_capacity, is_compound):
+                            r = note.Rest(quarterLength=float(sub_dur))
+                            r.voice = 1
+                            curr_measure.append(r)
                         
                     m_fill += take_dur
                     rem_dur -= take_dur
@@ -349,6 +380,8 @@ def process_folder(stem_folder, generate_all_levels=False):
                         n = note.Note(key_pitch)
                         n.quarterLength = float(sub_dur)
                         n.voice = 1
+                        # Dynamic MIDI Velocity Injection (25 - 127)
+                        n.volume.velocity = int(np.clip((amp if amp is not None else 0.8) * 127, 25, 127))
 
                         if s_idx is not None and f_val is not None:
                             n.addLyric(f"S{s_idx}:F{f_val}")
@@ -361,8 +394,9 @@ def process_folder(stem_folder, generate_all_levels=False):
                             elif level >= 3 and tag == "pop":
                                 n.articulations.append(articulations.Accent())
                                 
+                            # Re-anchored slur insertion to top-level stream (m21_part)
                             if is_legato and prev_note_obj is not None and level >= 2:
-                                curr_measure.insert(0.0, spanner.Slur(prev_note_obj, n))
+                                m21_part.insert(0, spanner.Slur([prev_note_obj, n]))
                             prev_note_obj = n
 
                         is_last_subpiece = (p_idx == len(dur_pieces) - 1) and (rem_dur == take_dur)
@@ -386,7 +420,7 @@ def process_folder(stem_folder, generate_all_levels=False):
             consolidate_measure_notation(curr_measure)
             m21_part.append(curr_measure)
 
-        m21_part.quantize(quarterLengthDivisors=(4, 3), processOffsets=True, processDurations=True, inPlace=True)
+        # Retain automated beam calculations; omit m21_part.quantize() to preserve exact engraver durations
         m21_part.makeBeams(inPlace=True)
         m21_score.append(m21_part)
 
@@ -398,13 +432,22 @@ def process_folder(stem_folder, generate_all_levels=False):
 def main():
     parser = argparse.ArgumentParser(description="Humanized Bass Transcription Engine")
     parser.add_argument('folders', nargs='+', help="Path to stem folder(s)")
-    parser.add_argument('-l', '--all-levels', action='store_true', help="Generate outputs for all 6 complexity/articulation levels (0-5). Default computes highest level only without level suffix.")
+    parser.add_argument('-a', '--all-levels', action='store_true', help="Generate outputs for all 6 complexity/articulation levels (0-5). Default computes highest level only without level suffix.")
+    parser.add_argument('-o', '--output-dir', help="Custom output directory for generated files")
+    parser.add_argument('-p', '--profile', default='HIGH_FIDELITY', help="Transcription profile (MIDI_TABS, HIGH_FIDELITY, FAST_DRAFT)")
+    parser.add_argument('--level', type=int, help="Specific complexity level (0-5) to override profile default")
 
     args = parser.parse_args()
 
     for folder in args.folders:
         if os.path.isdir(folder):
-            process_folder(folder, generate_all_levels=args.all_levels)
+            process_folder(
+                folder,
+                generate_all_levels=args.all_levels,
+                custom_output_dir=args.output_dir,
+                profile=args.profile,
+                level=args.level
+            )
         else:
             print(f"Directory non-existent: {folder}")
 

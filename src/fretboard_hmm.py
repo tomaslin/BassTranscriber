@@ -7,8 +7,8 @@ class ErgonomicFretboardHMMSolver:
         self.num_frets = 20
 
     def get_valid_positions(self, midi_pitch):
-        # Force midi_pitch into bass range first
-        while midi_pitch > 55: midi_pitch -= 12
+        # Force midi_pitch into bass range first (up to G4 / MIDI 67)
+        while midi_pitch > 67: midi_pitch -= 12
         while midi_pitch < 23: midi_pitch += 12
         return [(s, midi_pitch - open_p) for s, open_p in self.strings.items() if 0 <= midi_pitch - open_p <= self.num_frets]
 
@@ -25,8 +25,9 @@ class ErgonomicFretboardHMMSolver:
         for state in sequence_states[0]:
             string_num, fret = state
             tag = note_events[0][5]
-            # Heavily penalize frets outside lower 1-5 box position
-            box_cost = 0.0 if (0 <= fret <= 5) else (fret - 5) * 4.0
+            # Open string cost bonus (-2.0) to prefer open string positions over position jumps
+            open_string_bonus = -2.0 if fret == 0 else 0.0
+            box_cost = (0.0 if (0 <= fret <= 5) else (fret - 5) * 4.0) + open_string_bonus
             tech_cost = 10.0 if (tag == "pop" and string_num > 2) else 5.0 if (tag == "slap" and string_num < 3) else 0.0
             V[0][state], path[state] = -(box_cost + tech_cost), [state]
 
@@ -48,8 +49,11 @@ class ErgonomicFretboardHMMSolver:
                     string_shift = abs(c_string - p_string) * 2.0
                     high_fret_penalty = (c_fret - 5) * 5.0 if c_fret > 5 else 0.0
                     
+                    # Open string preference bonus
+                    open_string_cost = -2.0 if c_fret == 0 else 0.0
+                    
                     tech_cost = 15.0 if tag == "pop" and c_string > 2 else 8.0 if tag == "slap" and c_string < 3 else 0.0
-                    total_score = V[t-1][p_state] - (fret_shift + string_shift + high_fret_penalty + tech_cost)
+                    total_score = V[t-1][p_state] - (fret_shift + string_shift + high_fret_penalty + tech_cost + open_string_cost)
                     
                     if total_score > best_cost:
                         best_cost, best_prev = total_score, p_state

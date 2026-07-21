@@ -112,7 +112,8 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
     2. Injects proper score metadata, bass clef octave transposition (-1), and staff tuning details.
     3. Converts internal string/fret markers (S1:F3) into native <technical> tags.
     4. Enforces valid hammer-on/pull-off spanners (excluding open strings).
-    5. Purges leftover dynamics attributes and orphaned lyrics.
+    5. Synchronizes sound <tie> elements with visual <tied> notation tags.
+    6. Purges leftover dynamics attributes and orphaned lyrics.
     """
     # Phase 1: Raw String Pre-pass
     try:
@@ -231,6 +232,16 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
 
                 if 'dynamics' in note_elem.attrib:
                     del note_elem.attrib['dynamics']
+
+                # Synchronize sound <tie> elements with visual <notations><tied> elements
+                for tie_elem in note_elem.findall(f"{ns}tie"):
+                    t_type = tie_elem.attrib.get('type')
+                    if t_type:
+                        notations_elem = note_elem.find(f"{ns}notations")
+                        if notations_elem is None:
+                            notations_elem = ET.SubElement(note_elem, f"{ns}notations")
+                        if notations_elem.find(f"{ns}tied[@type='{t_type}']") is None:
+                            ET.SubElement(notations_elem, f"{ns}tied", attrib={"type": t_type})
 
                 string_num, fret_num = None, None
                 
