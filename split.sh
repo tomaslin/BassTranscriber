@@ -146,4 +146,4 @@ if [ -n "$DURATION" ]; then
 fi
 
 # Execute the chunking pipeline passing optional flags followed by file paths
-python run_split.py "${PY_ARGS[@]}" "${FILES[@]}"
+python run_split.py ${PY_ARGS[@]+"${PY_ARGS[@]}"} "${FILES[@]}"

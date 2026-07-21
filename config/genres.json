@@ -452,5 +452,70 @@
         "compound_meter": false,
         "swing": false
       }
-    }
+    },
+    "alternative": {
+        "bpm": [120, 25],
+        "centroid": [480, 150],
+        "density": [3.6, 1.0],
+        "zcr": [0.045, 0.020],
+        "features": {
+          "slap_pop": false,
+          "ghost_notes": true,
+          "micro_rhythm": false,
+          "compound_meter": false,
+          "swing": false
+        }
+      },
+      "alternative rnb": {
+        "bpm": [90, 20],
+        "centroid": [310, 95],
+        "density": [2.6, 0.8],
+        "zcr": [0.026, 0.011],
+        "features": {
+          "slap_pop": false,
+          "ghost_notes": true,
+          "micro_rhythm": true,
+          "compound_meter": false,
+          "swing": true
+        }
+      },
+      "dark pop": {
+        "bpm": [110, 20],
+        "centroid": [420, 110],
+        "density": [3.0, 0.8],
+        "zcr": [0.035, 0.015],
+        "features": {
+          "slap_pop": false,
+          "ghost_notes": true,
+          "micro_rhythm": false,
+          "compound_meter": false,
+          "swing": false
+        }
+      },
+      "funk metal": {
+        "bpm": [125, 30],
+        "centroid": [610, 175],
+        "density": [5.2, 1.6],
+        "zcr": [0.058, 0.025],
+        "features": {
+          "slap_pop": true,
+          "ghost_notes": true,
+          "micro_rhythm": true,
+          "compound_meter": false,
+          "swing": true
+        }
+      },
+      "progressive metal": {
+        "bpm": [135, 35],
+        "centroid": [600, 180],
+        "density": [5.0, 1.8],
+        "zcr": [0.055, 0.024],
+        "features": {
+          "slap_pop": true,
+          "ghost_notes": true,
+          "micro_rhythm": false,
+          "compound_meter": true,
+          "swing": false
+        }
+      }
 }
