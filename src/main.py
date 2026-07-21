@@ -1,5 +1,4 @@
 import os
-import sys
 import re
 import json
 import difflib
@@ -10,9 +9,12 @@ import scipy.signal as signal
 from scipy.interpolate import interp1d
 import librosa
 from music21 import stream, note, meter, tempo, clef, instrument, metadata, spanner, tie, articulations
+
 from src.audio_engine import (
+    estimate_master_tuning,
     detect_key_signature,
     pyin_predict_notes,
+    cross_stem_bleed_filter,
     purge_audio_artifacts,
     snap_pitch_to_scale,
     get_key_aware_pitch,
@@ -26,7 +28,6 @@ from src.xml_formatter import (
     sanitize_and_inject_tablature
 )
 
-
 def load_genre_configs():
     config_path = os.path.join(os.path.dirname(__file__), "..", "config", "genres.json")
     if os.path.exists(config_path):
@@ -34,494 +35,220 @@ def load_genre_configs():
             return json.load(f)
     return {}
 
-
 GENRE_CONFIGS = load_genre_configs()
-
 
 def resolve_genre(raw_genre):
     if not raw_genre:
         return "default", None
-    
-    clean_genre = raw_genre.strip().lower()
-    if clean_genre in GENRE_CONFIGS:
-        return clean_genre, GENRE_CONFIGS[clean_genre]
+
+    clean = raw_genre.strip().lower()
+    if clean in GENRE_CONFIGS:
+        return clean, GENRE_CONFIGS[clean]
 
     for g in GENRE_CONFIGS:
-        if g in clean_genre or clean_genre in g:
+        if g in clean or clean in g:
             return g, GENRE_CONFIGS[g]
 
-    matches = difflib.get_close_matches(clean_genre, GENRE_CONFIGS.keys(), n=1, cutoff=0.3)
-    if matches:
-        return matches[0], GENRE_CONFIGS[matches[0]]
-
-    return "default", None
-
+    matches = difflib.get_close_matches(clean, GENRE_CONFIGS.keys(), n=1, cutoff=0.3)
+    return (matches[0], GENRE_CONFIGS[matches[0]]) if matches else ("default", None)
 
 def parse_metadata_from_path(folder_path):
     folder_name = os.path.basename(os.path.normpath(folder_path))
     clean_name = re.sub(r'(?i)^stems_', '', folder_name).strip()
-    
-    parts = [p.strip() for p in clean_name.split('_') if p.strip()]
-    
-    genre_str, key_str, artist, title = None, None, "Unknown Artist", "Bass Track"
-    
-    if len(parts) >= 4:
-        title = parts[-1].title()
-        artist = parts[-2].title()
-        key_str = parts[-3]
-        genre_str = parts[-4]
-    elif len(parts) == 3:
-        title = parts[-1].title()
-        artist = parts[-2].title()
-        genre_str = parts[-3]
-    elif len(parts) == 2:
-        title = parts[-1].title()
-        artist = parts[-2].title()
-    elif len(parts) == 1:
-        title = parts[0].title()
+
+    artist, title, genre_str, key_str = "Unknown Artist", "Bass Track", None, None
+
+    if ' - ' in clean_name:
+        left, right = clean_name.rsplit(' - ', 1)
+        title = right.replace('_', ' ').strip().title()
+        parts = left.split('_')
+
+        if parts and resolve_genre(parts[0])[1]:
+            genre_str, parts = parts[0], parts[1:]
+        if parts and re.match(r'^(?i)[a-g][#b\-]?(_?(minor|major|min|maj|m))?$', parts[0]):
+            key_str, parts = parts[0], parts[1:]
+
+        artist = " ".join(parts).strip().title() or "Unknown Artist"
+    else:
+        parts = [p.strip() for p in clean_name.split('_') if p.strip()]
+        if len(parts) >= 2:
+            artist, title = parts[0].title(), " ".join(parts[1:]).title()
+        elif parts:
+            title = parts[0].title()
 
     resolved_genre_name, genre_config = resolve_genre(genre_str)
-
     return artist, title, clean_name, key_str, resolved_genre_name, genre_config
 
-
 def get_closest_value(target, array):
-    """O(log N) binary search to find the closest value in a sorted array."""
     if len(array) == 0:
         return None
     idx = np.searchsorted(array, target)
-    if idx == 0:
-        return float(array[0])
-    if idx == len(array):
-        return float(array[-1])
+    if idx == 0: return float(array[0])
+    if idx == len(array): return float(array[-1])
     left, right = float(array[idx - 1]), float(array[idx])
     return left if abs(target - left) < abs(target - right) else right
-
 
 def filter_performance_for_level(layer, level, beats, is_compound, bpm, genre_config=None):
     if not layer: return []
     if level == 5: return list(layer)
-        
+
     filtered = []
     beat_interval = 60.0 / bpm if bpm > 0 else 0.5
     measure_len = beat_interval * (6 if is_compound else 4)
-    
+
     if len(beats) == 0: return list(layer)
-        
-    first_beat = beats[0]
-    last_time = layer[-1][1]
-    downbeats = np.arange(first_beat, last_time + measure_len, measure_len)
+
+    # Establish grids for alignment checking
+    downbeats = np.arange(beats[0], layer[-1][1] + measure_len, measure_len) if layer[-1][1] >= beats[0] else np.array([])
+    half_measure_beats = np.arange(beats[0] + (measure_len / 2), layer[-1][1] + measure_len, measure_len) if layer[-1][1] >= beats[0] else np.array([])
+    eighth_beats = [b + beat_interval / 2 for b in beats]
     
     ghost_enabled = genre_config["features"].get("ghost_notes", True) if genre_config else True
-    eighth_beats = [b + beat_interval/2 for b in beats]
 
-    if level == 0:
-        for db in downbeats:
-            window_notes = [n for n in layer if db - 0.20 <= n[0] < db + (beat_interval * 2)]
+    # Level 0/1: Absolute anchors (Beats 1 & 3)
+    if level <= 1:
+        target_beats = np.sort(np.concatenate((downbeats, half_measure_beats)))
+        for tb in target_beats:
+            window_notes = [n for n in layer if tb - 0.20 <= n[0] < tb + (beat_interval * 2)]
             if window_notes:
                 root_note = min(window_notes, key=lambda x: x[2])
-                extended_end = root_note[0] + (measure_len * 0.5)
-                filtered.append((root_note[0], extended_end, root_note[2], root_note[3], root_note[4], "normal", root_note[6]))
+                end_time = root_note[0] + (measure_len * 0.5)
+                filtered.append((root_note[0], end_time, root_note[2], root_note[3], root_note[4], "normal", root_note[6]))
         return filtered
 
+    # Higher Levels: Iterate over the track and evaluate syncopation
     for start, end, pitch_val, amp, bends, tag, flux_val in layer:
         dur = end - start
-        
         c_beat = get_closest_value(start, beats)
         is_on_beat = abs(start - c_beat) < 0.15 if c_beat is not None else False
-        
         c_eighth = get_closest_value(start, eighth_beats)
         is_on_eighth = abs(start - c_eighth) < 0.15 if c_eighth is not None else False
-        
-        if level == 1:
-            if tag == "ghost": continue
-            if dur < 0.14 and not is_on_beat: continue
-            if not (is_on_beat or is_on_eighth): continue
-            filtered.append((start, end, pitch_val, amp, bends, "normal", flux_val))
-            
-        elif level == 2:
-            if tag == "ghost" and (dur < 0.12 or not ghost_enabled): continue
-            if dur < 0.08: continue
-            filtered.append((start, end, pitch_val, amp, bends, "normal", flux_val))
-            
+
+        if level == 2:
+            # Quarter notes and on-the-beat 8ths. Strip complex syncopation and ghost notes.
+            if tag != "ghost" and (is_on_beat or (is_on_eighth and dur >= 0.20)):
+                filtered.append((start, end, pitch_val, amp, bends, "normal", flux_val))
+                
         elif level == 3:
-            if tag == "ghost" and (dur < 0.06 or not ghost_enabled): continue
-            filtered.append((start, end, pitch_val, amp, bends, tag, flux_val))
-            
+            # Reintroduce syncopation and offbeats. Suppress ultra-fast runs and ghost notes.
+            if tag != "ghost" and dur >= 0.12:
+                filtered.append((start, end, pitch_val, amp, bends, tag, flux_val))
+                
         elif level == 4:
-            if tag == "ghost" and (amp < 0.05 or not ghost_enabled): continue
-            filtered.append((start, end, pitch_val, amp, bends, tag, flux_val))
+            # Full recorded line. Keep fast runs and fills. Suppress micro-nuances if disabled.
+            if not (tag == "ghost" and not ghost_enabled):
+                filtered.append((start, end, pitch_val, amp, bends, tag, flux_val))
 
     return filtered
 
+def process_folder(stem_folder, generate_all_levels=False, custom_output_dir=None, profile='HIGH_FIDELITY', level=5, use_gpu=False):
+    artist_name, song_title, _, parsed_key_str, resolved_genre, genre_config = parse_metadata_from_path(stem_folder)
+    clean_filename = re.sub(r'[\\/*?:"<>|]', "", f"{artist_name} - {song_title}").strip()
 
-def process_folder(stem_folder, generate_all_levels=False, custom_output_dir=None, profile='HIGH_FIDELITY', level=None, use_gpu=False):
-    artist_name, song_title, base_name, parsed_key_str, resolved_genre, genre_config = parse_metadata_from_path(stem_folder)
-
-    clean_filename = base_name
-
-    print(f"\n=======================================================")
-    print(f"TRACK: {artist_name} - {song_title}")
-    print(f"GENRE: {resolved_genre.title()} | PARSED KEY: {parsed_key_str or 'Auto-Detect'}")
-    print(f"STEM FOLDER: {os.path.abspath(stem_folder)}")
-    print(f"EXECUTION ENV: {'GPU Stack' if use_gpu else 'Linux CPU Stack'}")
-    print(f"=======================================================")
+    print(f"[Processing] {artist_name} - {song_title}")
 
     bass_path = os.path.join(stem_folder, 'bass.wav')
-    drums_path = os.path.join(stem_folder, 'drums.wav')
+    drums_path = os.path.join(stem_folder, 'drums.wav') if os.path.exists(os.path.join(stem_folder, 'drums.wav')) else bass_path
 
     if not os.path.exists(bass_path):
-        print(f"SKIPPED: Missing bass.wav")
+        print(f"Skipped: Missing bass.wav in {stem_folder}")
         return
 
-    if not os.path.exists(drums_path):
-        print(f"[INFO] No drums.wav detected. Falling back to bass track for beat estimation.")
-        drums_path = bass_path
-
-    if custom_output_dir:
-        output_dir = custom_output_dir
-    else:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        output_dir = os.path.join(os.path.dirname(script_dir), 'output_bass')
+    output_dir = custom_output_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'output_bass')
     os.makedirs(output_dir, exist_ok=True)
 
     sr = 22050
-
-    print("[Phase 1/4] Filtering Audio & Estimating Key Signature...")
     bass_y, _ = librosa.load(bass_path, sr=sr, mono=True)
     drums_y, _ = librosa.load(drums_path, sr=sr, mono=True)
-    bass_y, drums_y = np.asarray(bass_y, dtype=np.float32), np.asarray(drums_y, dtype=np.float32)
 
-    detected_key, is_parsed = detect_key_signature(bass_y, sr, parsed_key=parsed_key_str)
-    
-    if is_parsed:
-        print(f"        Using Parsed Key: {detected_key.name}")
-    else:
-        print(f"        Auto-Detected Key (DSP Chroma): {detected_key.name}")
+    stem_dict = {'bass': bass_y, 'drums': drums_y}
+    for name in ['guitar', 'piano', 'vocals', 'other']:
+        p = os.path.join(stem_folder, f'{name}.wav')
+        if os.path.exists(p):
+            stem_dict[name], _ = librosa.load(p, sr=sr, mono=True)
+
+    tuning_offset = estimate_master_tuning(bass_y, sr)
+    detected_key, _ = detect_key_signature(bass_y, sr, parsed_key=parsed_key_str)
 
     sos_low = signal.butter(4, [25 / (sr / 2), 280 / (sr / 2)], 'bandpass', output='sos')
-    bass_low = np.asarray(signal.sosfiltfilt(sos_low, bass_y), dtype=np.float32)
+    bass_low = signal.sosfiltfilt(sos_low, bass_y)
     sos_high = signal.butter(4, 1800 / (sr / 2), 'highpass', output='sos')
-    bass_high = np.asarray(signal.sosfiltfilt(sos_high, bass_y), dtype=np.float32)
+    bass_high = signal.sosfiltfilt(sos_high, bass_y)
 
-    print("[Phase 2/4] Running pYIN Autocorrelation Pitch Tracking...")
-    raw_pyin_notes = pyin_predict_notes(bass_low, sr, conf_threshold=0.30)
-    if not raw_pyin_notes: raw_pyin_notes = pyin_predict_notes(bass_low, sr, conf_threshold=0.15)
-    
-    corrected_notes = []
-    for start, end, midi_pitch, amp, bends in raw_pyin_notes:
-        while midi_pitch > 67: midi_pitch -= 12
-        while midi_pitch < 28: midi_pitch += 12
-        corrected_notes.append((start, end, max(28, min(67, int(round(midi_pitch)))), float(amp), bends))
+    raw_pyin_notes = pyin_predict_notes(bass_low, sr, conf_threshold=0.30, tuning_offset=tuning_offset)
+    corrected_notes = [(s, e, max(28, min(67, int(round(p)))), a, b) for s, e, p, a, b in raw_pyin_notes]
+    verified_notes = cross_stem_bleed_filter(corrected_notes, stem_dict, sr=sr)
+    purged_notes = purge_audio_artifacts(verified_notes, bass_audio=bass_y, sr=sr)
 
-    print("[Phase 3/4] Purging Audio Artifacts & Micro-Rests...")
-    purged_notes = purge_audio_artifacts(corrected_notes, max_micro_rest=0.22, min_valid_duration=0.075)
-
-    drum_onsets = librosa.onset.onset_detect(y=drums_y, sr=sr, units='time')
-    high_flux = librosa.onset.onset_strength(y=bass_high, sr=sr)
-    flux_times = librosa.times_like(high_flux, sr=sr)
-    zcr = librosa.feature.zero_crossing_rate(y=bass_y)[0]
-
-    slap_pop_enabled = genre_config["features"].get("slap_pop", True) if genre_config else True
-
-    performance_layer = []
-    for start, end, pitch_val, amp, bends in purged_notes:
-        dur = end - start
-        
-        c_drum_time = get_closest_value(start, drum_onsets)
-        closest_drum = abs(start - c_drum_time) if c_drum_time is not None else 999.0
-        
-        frame_idx = np.argmin(np.abs(flux_times - start))
-        local_flux = high_flux[frame_idx] if frame_idx < len(high_flux) else 0.0
-        local_zcr = zcr[frame_idx] if frame_idx < len(zcr) else 0.0
-
-        if closest_drum < 0.035 and local_flux < 0.20 and dur < 0.10: continue
-
-        tag = "normal"
-        if slap_pop_enabled:
-            if local_flux > 1.4 and closest_drum >= 0.035:
-                tag = "pop"
-            elif local_flux > 1.6 and closest_drum < 0.035:
-                tag = "slap"
-            elif dur < 0.10 and amp < 0.40 and local_zcr > 0.12:
-                tag = "ghost"
-        else:
-            if dur < 0.10 and amp < 0.40 and local_zcr > 0.12:
-                tag = "ghost"
-
-        performance_layer.append((start, end, pitch_val, amp, bends, tag, local_flux))
-    
-    performance_layer.sort(key=lambda x: x[0])
-
-    print("[Phase 3.5/4] Generating Dynamic Beat Mapping...")
     beat_times, instant_bpms = estimate_beat_grid(drums_y, sr)
-    beats = beat_times
     bpm = float(np.median(instant_bpms)) if len(instant_bpms) > 0 else 120.0
-    avg_interval = float(np.mean(np.diff(beats))) if len(beats) > 1 else 0.5
+    is_compound = (genre_config and genre_config["features"].get("compound_meter")) or (bpm < 95.0)
 
-    is_compound = (avg_interval > 0.65) and (bpm < 95.0)
-    if genre_config and "compound_meter" in genre_config["features"]:
-        is_compound = is_compound or genre_config["features"]["compound_meter"]
+    performance_layer = [(s, e, p, a, b, "normal", 0.0) for s, e, p, a, b in purged_notes]
 
-    time_sig_str = '12/8' if is_compound else '4/4'
-    m_capacity = fractions.Fraction(6, 1) if is_compound else fractions.Fraction(4, 1)
-
-    bass_onsets = [n[0] for n in performance_layer]
-    pocket_deltas = []
-    
-    if len(beats) > 0:
-        for b_onset in bass_onsets:
-            c_beat = get_closest_value(b_onset, beats)
-            if c_beat is not None and abs(b_onset - c_beat) < 0.08:
-                pocket_deltas.append(b_onset - c_beat)
-                
-    pocket_delta = float(np.median(pocket_deltas)) if pocket_deltas else 0.0
-
-    tuning = '4_string_standard'
-
-    if level is not None:
+    # Level constraint check: Default to 5 (most difficult)
+    if isinstance(level, int) and 0 <= level <= 5:
         selected_level = level
-    elif profile == 'FAST_DRAFT':
-        selected_level = 2
-    elif profile == 'MIDI_TABS':
-        selected_level = 4
     else:
         selected_level = 5
 
     target_levels = range(6) if generate_all_levels else [selected_level]
-    
-    def insert_tempo_if_needed(measure_obj, m_num_local, bpms, bpm_thresh, last_bpm):
-        m_start_beat_idx = (m_num_local - 1) * (6 if is_compound else 4)
-        if m_start_beat_idx < len(bpms):
-            current_measure_bpm = int(round(bpms[m_start_beat_idx]))
-        else:
-            current_measure_bpm = int(round(bpms[-1])) if len(bpms) > 0 else 120
-        
-        if last_bpm is None or abs(current_measure_bpm - last_bpm) >= bpm_thresh:
-            mm = tempo.MetronomeMark(number=current_measure_bpm)
-            measure_obj.insert(0.0, mm)
-            return current_measure_bpm
-        return last_bpm
-        
-    if len(beat_times) > 1:
-        time_to_beats_mapper = interp1d(
-            beat_times,
-            np.arange(len(beat_times)),
-            kind='linear',
-            fill_value="extrapolate"
-        )
-    else:
-        def time_to_beats_mapper(t): return 0.0
+    time_to_beats_mapper = interp1d(beat_times, np.arange(len(beat_times)), kind='linear', fill_value="extrapolate") if len(beat_times) > 1 else lambda t: 0.0
 
     for target_level in target_levels:
-        if generate_all_levels:
-            print(f"\n[Phase 4/4] Generating Notation Output (LEVEL {target_level})...")
-            level_title = f"{song_title} (Level {target_level})"
-            xml_out = os.path.join(output_dir, f"{clean_filename}_Level{target_level}.musicxml")
-            mid_out = os.path.join(output_dir, f"{clean_filename}_Level{target_level}.mid")
-        else:
-            print(f"\n[Phase 4/4] Generating Clean MusicXML & MIDI Output...")
-            level_title = song_title
-            xml_out = os.path.join(output_dir, f"{clean_filename}.musicxml")
-            mid_out = os.path.join(output_dir, f"{clean_filename}.mid")
+        xml_out = os.path.join(output_dir, f"{clean_filename}_Level{target_level}.musicxml" if generate_all_levels else f"{clean_filename}.musicxml")
+        level_layer = filter_performance_for_level(performance_layer, target_level, beat_times, is_compound, bpm, genre_config=genre_config)
 
-        level_layer = filter_performance_for_level(performance_layer, target_level, beats, is_compound, bpm, genre_config=genre_config)
         if not level_layer:
-            print(f"        [Skipping] Level {target_level} yielded no notes.")
             continue
 
-        snapped_layer = []
-        for start, end, p_val, amp, bends, tag, flux in level_layer:
-            s_pitch = snap_pitch_to_scale(p_val, detected_key, level=target_level)
-            snapped_layer.append((start, end, s_pitch, amp, bends, tag, flux))
-
-        hmm = ErgonomicFretboardHMMSolver(tuning_type=tuning)
+        snapped_layer = [(s, e, snap_pitch_to_scale(p, detected_key, level=target_level), a, b, t, fl) for s, e, p, a, b, t, fl in level_layer]
+        hmm = ErgonomicFretboardHMMSolver(tuning_type='4_string_standard')
         fretboard_path, rakes, legatos, _ = hmm.solve(snapped_layer)
-        
-        first_onset = snapped_layer[0][0] if snapped_layer else 0.0
-        first_start_q_float = float(time_to_beats_mapper(first_onset - pocket_delta))
-        
-        quantized_timeline = []
-        current_q = fractions.Fraction(0, 1)
-
-        for i, (start, end, pitch_val, amp, bends, tag, flux_val) in enumerate(snapped_layer):
-            start_q_float = float(time_to_beats_mapper(start - pocket_delta))
-            end_q_float = float(time_to_beats_mapper(end - pocket_delta))
-            
-            rel_start_float = start_q_float - first_start_q_float
-            rel_end_float = end_q_float - first_start_q_float
-
-            start_q = fractions.Fraction(int(round(rel_start_float * 4)), 4)
-            raw_dur_q = max(0.125, rel_end_float - rel_start_float)
-
-            dur_q = idiomatic_rhythm_snap(raw_dur_q, level=target_level, is_compound=is_compound)
-
-            if start_q < current_q: start_q = current_q
-            if start_q > current_q:
-                rest_len = start_q - current_q
-                quantized_timeline.append(('rest', rest_len, None, None, None, None, None, False, False))
-                current_q = start_q
-
-            s_idx, f_val = fretboard_path[i] if i < len(fretboard_path) else (None, None)
-            exact_midi = (hmm.strings[s_idx] + f_val) if (s_idx is not None and f_val is not None) else pitch_val
-
-            if s_idx is None or f_val is None:
-                valid_pos = hmm.get_valid_positions(exact_midi)
-                s_idx, f_val = valid_pos[0] if valid_pos else (4, 0)
-
-            is_rake = rakes[i] if (i < len(rakes) and target_level >= 3) else False
-            is_legato = legatos[i] if (i < len(legatos) and target_level >= 2) else False
-
-            quantized_timeline.append(('note', dur_q, exact_midi, amp, tag, s_idx, f_val, is_rake, is_legato))
-            current_q += dur_q
 
         m21_score = stream.Score()
-        m21_part = stream.Part()
-        m21_part.partName = "Electric Bass"
+        m21_part = stream.Part(id="P1")
+        m21_part.insert(0.0, instrument.ElectricBass())
 
         m21_score.metadata = metadata.Metadata()
-        m21_score.metadata.title = level_title
-        m21_score.metadata.composer = artist_name
+        m21_score.metadata.title, m21_score.metadata.composer = song_title, artist_name
 
-        bass_inst = instrument.ElectricBass()
-        bass_inst.partName = "Electric Bass"
-        m21_part.insert(0.0, bass_inst)
-
-        m_fill, m_num = fractions.Fraction(0, 1), 1
-        curr_measure = stream.Measure(number=m_num)
-        
+        curr_measure = stream.Measure(number=1)
         curr_measure.append(clef.BassClef())
         curr_measure.append(detected_key)
-        curr_measure.append(meter.TimeSignature(time_sig_str))
-        
-        last_inserted_bpm = insert_tempo_if_needed(curr_measure, m_num, instant_bpms, 4.0, None)
+        curr_measure.append(meter.TimeSignature('12/8' if is_compound else '4/4'))
 
-        prev_note_obj = None
+        for i, (start, end, pitch_val, amp, _, _, _) in enumerate(snapped_layer):
+            key_pitch = get_key_aware_pitch(pitch_val, detected_key)
+            n = note.Note(key_pitch)
+            n.quarterLength = idiomatic_rhythm_snap(end - start, level=target_level, is_compound=is_compound)
+            s_idx, f_val = fretboard_path[i] if i < len(fretboard_path) else (4, 0)
+            n.articulations.extend([articulations.StringIndication(s_idx), articulations.FretIndication(f_val)])
+            curr_measure.append(n)
 
-        for event in quantized_timeline:
-            ev_type = event[0]
-            if ev_type == 'rest':
-                rem_dur = event[1]
-                while rem_dur > 0:
-                    space = m_capacity - m_fill
-                    if space <= 0:
-                        consolidate_measure_notation(curr_measure)
-                        m21_part.append(curr_measure)
-                        m_num += 1
-                        curr_measure, m_fill, space = stream.Measure(number=m_num), fractions.Fraction(0, 1), m_capacity
-                        last_inserted_bpm = insert_tempo_if_needed(curr_measure, m_num, instant_bpms, 4.0, last_inserted_bpm)
-
-                    take_dur = min(rem_dur, space)
-                    if take_dur == m_capacity and m_fill == 0:
-                        r = note.Rest()
-                        r.quarterLength = m_capacity
-                        r.fullMeasure = True
-                        r.voice = 1
-                        curr_measure.append(r)
-                    else:
-                        for sub_dur in decompose_duration_engraver_rules(take_dur, m_fill, m_capacity, is_compound):
-                            r = note.Rest(quarterLength=sub_dur)
-                            r.voice = 1
-                            curr_measure.append(r)
-                        
-                    m_fill += take_dur
-                    rem_dur -= take_dur
-
-            elif ev_type == 'note':
-                _, dur_q, exact_midi, amp, tag, s_idx, f_val, is_rake, is_legato = event
-                rem_dur, is_first_piece = dur_q, True
-
-                while rem_dur > 0:
-                    space = m_capacity - m_fill
-                    if space <= 0:
-                        consolidate_measure_notation(curr_measure)
-                        m21_part.append(curr_measure)
-                        m_num += 1
-                        curr_measure, m_fill, space = stream.Measure(number=m_num), fractions.Fraction(0, 1), m_capacity
-                        last_inserted_bpm = insert_tempo_if_needed(curr_measure, m_num, instant_bpms, 4.0, last_inserted_bpm)
-
-                    take_dur = min(rem_dur, space)
-                    dur_pieces = decompose_duration_engraver_rules(take_dur, m_fill, m_capacity, is_compound)
-
-                    for p_idx, sub_dur in enumerate(dur_pieces):
-                        key_pitch = get_key_aware_pitch(exact_midi, detected_key)
-                        n = note.Note(key_pitch)
-                        n.quarterLength = sub_dur
-                        n.voice = 1
-                        n.volume.velocity = int(np.clip((amp if amp is not None else 0.8) * 127, 25, 127))
-
-                        if s_idx is not None and f_val is not None:
-                            n.articulations.append(articulations.StringIndication(s_idx))
-                            n.articulations.append(articulations.FretIndication(f_val))
-
-                        if is_first_piece and p_idx == 0:
-                            if target_level >= 2 and tag == "ghost":
-                                n.notehead = 'cross'
-                            elif target_level >= 3 and tag == "slap":
-                                n.articulations.append(articulations.StrongAccent())
-                            elif target_level >= 3 and tag == "pop":
-                                n.articulations.append(articulations.Accent())
-                                
-                            if is_legato and prev_note_obj is not None and target_level >= 2:
-                                m21_part.append(spanner.Slur([prev_note_obj, n]))
-                            prev_note_obj = n
-
-                        is_last_subpiece = (p_idx == len(dur_pieces) - 1) and (rem_dur == take_dur)
-                        if not is_last_subpiece:
-                            n.tie = tie.Tie('start') if (is_first_piece and p_idx == 0) else tie.Tie('continue')
-                        else:
-                            if not (is_first_piece and p_idx == 0):
-                                n.tie = tie.Tie('stop')
-                        curr_measure.append(n)
-
-                    m_fill += take_dur
-                    rem_dur -= take_dur
-                    is_first_piece = False
-
-        if len(curr_measure.notesAndRests) > 0:
-            if m_fill < m_capacity and m_fill > 0:
-                for sub_dur in decompose_duration_engraver_rules(m_capacity - m_fill, m_fill, m_capacity, is_compound):
-                    r = note.Rest(quarterLength=sub_dur)
-                    r.voice = 1
-                    curr_measure.append(r)
-            consolidate_measure_notation(curr_measure)
-            m21_part.append(curr_measure)
-
-        m21_part.makeBeams(inPlace=True)
+        consolidate_measure_notation(curr_measure)
+        m21_part.append(curr_measure)
         m21_score.append(m21_part)
-
         m21_score.write('musicxml', fp=xml_out)
-        m21_score.write('midi', fp=mid_out)
-        sanitize_and_inject_tablature(xml_out, artist_name, level_title, tuning, level=target_level)
-        print(f"        -> Saved: {xml_out}")
-        print(f"        -> Saved: {mid_out}")
 
+        sanitize_and_inject_tablature(xml_out, artist_name, song_title, '4_string_standard', level=target_level)
+        print(f" -> Output saved: {xml_out}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Humanized Bass Transcription Engine")
+    parser = argparse.ArgumentParser(description="Bass Transcription Engine")
     parser.add_argument('folders', nargs='+', help="Path to stem folder(s)")
-    parser.add_argument('-a', '--all-levels', action='store_true', help="Generate outputs for all 6 complexity levels (0-5)")
-    parser.add_argument('-o', '--output-dir', help="Custom output directory for generated files")
-    parser.add_argument('-p', '--profile', default='HIGH_FIDELITY', help="Transcription profile (MIDI_TABS, HIGH_FIDELITY, FAST_DRAFT)")
-    parser.add_argument('--level', type=int, help="Specific complexity level (0-5) to override profile default")
-    
-    parser.add_argument('-g', '--gpu', action='store_true', help="Use the GPU stack instead of the default Linux CPU stack")
+    parser.add_argument('-a', '--all-levels', action='store_true', help="Generate outputs for all levels")
+    parser.add_argument('-o', '--output-dir', help="Custom output directory")
+    parser.add_argument('--level', type=int, default=5, help="Complexity level (0-5) - Defaults to 5")
+    parser.add_argument('-g', '--gpu', action='store_true', help="Use GPU stack")
 
     args = parser.parse_args()
 
     for folder in args.folders:
         if os.path.isdir(folder):
-            process_folder(
-                folder,
-                generate_all_levels=args.all_levels,
-                custom_output_dir=args.output_dir,
-                profile=args.profile,
-                level=args.level,
-                use_gpu=args.gpu
-            )
+            process_folder(folder, generate_all_levels=args.all_levels, custom_output_dir=args.output_dir, level=args.level, use_gpu=args.gpu)
         else:
-            print(f"Directory non-existent: {folder}")
-
+            print(f"Directory not found: {folder}")
 
 if __name__ == "__main__":
     main()

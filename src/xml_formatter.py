@@ -1,18 +1,16 @@
 import re
 import fractions
 import xml.etree.ElementTree as ET
-from music21 import note
+from music21 import note, tie
+
 
 def idiomatic_rhythm_snap(raw_dur_q, level=5, is_compound=False):
-    """
-    Quantizes raw note durations into musically idiomatic fractional quarter lengths
-    based on the selected complexity/articulation level.
-    """
+    """Quantizes note durations into musically idiomatic fractional quarter lengths."""
     if level == 0:
         if raw_dur_q >= 3.0: return fractions.Fraction(4, 1)
         if raw_dur_q >= 1.5: return fractions.Fraction(2, 1)
         return fractions.Fraction(1, 1)
-    
+
     if level == 1:
         if raw_dur_q >= 3.2: return fractions.Fraction(4, 1)
         if raw_dur_q >= 1.7: return fractions.Fraction(2, 1)
@@ -21,275 +19,169 @@ def idiomatic_rhythm_snap(raw_dur_q, level=5, is_compound=False):
 
     if is_compound:
         if 0.35 <= raw_dur_q <= 0.65: return fractions.Fraction(1, 2)
-        elif 0.85 <= raw_dur_q <= 1.20: return fractions.Fraction(1, 1)
-        elif raw_dur_q < 0.35: return fractions.Fraction(1, 4)
+        if 0.85 <= raw_dur_q <= 1.20: return fractions.Fraction(1, 1)
+        if raw_dur_q < 0.35: return fractions.Fraction(1, 4)
     else:
         if 0.38 <= raw_dur_q <= 0.65: return fractions.Fraction(1, 2)
         if 0.85 <= raw_dur_q <= 1.15: return fractions.Fraction(1, 1)
         if 0.70 <= raw_dur_q < 0.85: return fractions.Fraction(3, 4)
         if raw_dur_q < 0.38: return fractions.Fraction(1, 4)
-        
+
     eighth_steps = max(1, int(round(raw_dur_q * 2)))
     return fractions.Fraction(eighth_steps, 2)
 
 
 def decompose_duration_engraver_rules(dur_quarter, m_fill_offset, m_capacity, is_compound=False):
-    """
-    Decomposes quarter lengths across measure boundaries and beat centers (Beat 3 in 4/4)
-    following standard music engraving rules.
-    """
+    """Decomposes duration values across measure and half-measure boundaries."""
     units = []
     rem = fractions.Fraction(dur_quarter).limit_denominator(16)
     curr_offset = fractions.Fraction(m_fill_offset).limit_denominator(16)
 
     while rem > 0:
         space = m_capacity - curr_offset
-        if space <= 0: break
+        if space <= 0:
+            break
 
-        if not is_compound and m_capacity == fractions.Fraction(4, 1):
-            if curr_offset < fractions.Fraction(2, 1) and (curr_offset + rem) > fractions.Fraction(2, 1):
-                take = fractions.Fraction(2, 1) - curr_offset
-            else:
-                take = min(rem, space)
+        half_capacity = fractions.Fraction(3, 1) if is_compound and m_capacity == 6 else fractions.Fraction(2, 1)
+        if curr_offset < half_capacity < (curr_offset + rem):
+            take = half_capacity - curr_offset
         else:
             take = min(rem, space)
 
         units.append(take)
         rem -= take
         curr_offset += take
-        
-    return units if units else [fractions.Fraction(1, 4)]
+
+    return units or [fractions.Fraction(1, 4)]
 
 
-def consolidate_measure_notation(measure):
-    """
-    Consolidates consecutive rests and tied notes of matching pitch within a measure,
-    preserving cross-measure tie definitions and accurate MusicXML types.
-    """
+def consolidate_measure_notation(measure, max_rest_units=2520):
+    """Consolidates rests and adjacent tied notes within a measure."""
     elems = list(measure.notesAndRests)
-    if not elems: return
-    
-    consolidated = []
-    curr = elems[0]
-    
+    if not elems:
+        return
+
+    max_rest_q = fractions.Fraction(max_rest_units, 5040)
+    consolidated, curr = [], elems[0]
+
     for next_el in elems[1:]:
-        if isinstance(curr, note.Rest) and isinstance(next_el, note.Rest):
+        if isinstance(curr, note.Note) and isinstance(next_el, note.Rest) and next_el.quarterLength <= max_rest_q:
+            curr.quarterLength += next_el.quarterLength
+        elif isinstance(curr, note.Rest) and isinstance(next_el, note.Rest):
             curr.quarterLength += next_el.quarterLength
         elif (isinstance(curr, note.Note) and isinstance(next_el, note.Note) and
-                curr.pitch.midi == next_el.pitch.midi and curr.tie and
-                curr.tie.type in ['start', 'continue']):
-            
+              curr.pitch.midi == next_el.pitch.midi and curr.tie and
+              curr.tie.type in ['start', 'continue']):
+
             curr.quarterLength += next_el.quarterLength
-            
-            c_type = curr.tie.type
-            n_type = next_el.tie.type if next_el.tie else None
+            c_type, n_type = curr.tie.type, next_el.tie.type if next_el.tie else None
 
             if c_type == 'start' and n_type == 'stop':
                 curr.tie = None
             elif c_type == 'start' and n_type == 'continue':
-                curr.tie.type = 'start'
+                curr.tie = tie.Tie('start')
             elif c_type == 'continue' and n_type == 'stop':
-                curr.tie.type = 'stop'
+                curr.tie = tie.Tie('stop')
             elif c_type == 'continue' and n_type == 'continue':
-                curr.tie.type = 'continue'
+                curr.tie = tie.Tie('continue')
         else:
             consolidated.append(curr)
             curr = next_el
-            
+
     consolidated.append(curr)
-    
-    for el in elems:
-        measure.remove(el)
-    for el in consolidated:
-        measure.append(el)
+
+    # Rebuild measure elements efficiently
+    measure.elements = tuple(consolidated)
 
 
 def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type, level=5):
-    """
-    Performs full DOM post-processing:
-    1. Removes binary wrapper headers and non-XML string noise.
-    2. Injects proper score metadata, bass clef octave transposition (-1), and staff tuning details.
-    3. Reads native <technical> tags injected by music21 to process articulation constraints.
-    4. Enforces valid hammer-on/pull-off spanners (excluding open strings).
-    5. Synchronizes sound <tie> elements with visual <tied> notation tags.
-    6. Purges leftover dynamics attributes and orphaned lyrics.
-    """
+    """Injects metadata and updates staff tuning and tablature annotations in MusicXML."""
     try:
         with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
 
-        xml_start_idx = content.find('<?xml')
-        if xml_start_idx == -1:
-            xml_start_idx = content.find('<score-partwise')
-
-        xml_end_idx = content.rfind('</score-partwise>')
-
-        if xml_start_idx != -1 and xml_end_idx != -1:
-            clean_xml = content[xml_start_idx : xml_end_idx + len('</score-partwise>')]
+        s_idx, e_idx = content.find('<?xml'), content.rfind('</score-partwise>')
+        if s_idx != -1 and e_idx != -1:
+            clean_xml = content[s_idx : e_idx + len('</score-partwise>')]
             with open(xml_path, 'w', encoding='utf-8') as f:
                 f.write(clean_xml)
     except Exception as e:
-        print(f"Warning during string pre-clean pass: {e}")
+        pass
 
     tree = ET.parse(xml_path)
     root = tree.getroot()
     ns = root.tag.split('}')[0] + '}' if '}' in root.tag else ""
 
     root.tag = f"{ns}score-partwise"
-    part_list = root.find(f"{ns}part-list")
-    if part_list is None:
-        part_list = ET.SubElement(root, f"{ns}part-list")
-    
-    score_part = part_list.find(f"{ns}score-part")
-    if score_part is None:
-        score_part = ET.SubElement(part_list, f"{ns}score-part", attrib={"id": "P1"})
-    else:
-        score_part.attrib["id"] = "P1"
 
-    part_name = score_part.find(f"{ns}part-name")
-    if part_name is None:
-        part_name = ET.SubElement(score_part, f"{ns}part-name")
-    part_name.text = "Electric Bass"
+    def set_or_create(parent, tag_name, text_val, attrib=None):
+        elem = parent.find(f"{ns}{tag_name}")
+        if elem is None:
+            elem = ET.SubElement(parent, f"{ns}{tag_name}", attrib=attrib or {})
+        elem.text = text_val
+        return elem
 
-    work_elem = root.find(f"{ns}work")
-    if work_elem is None:
-        work_elem = ET.Element(f"{ns}work")
-        root.insert(0, work_elem)
-    work_title = work_elem.find(f"{ns}work-title")
-    if work_title is None:
-        work_title = ET.SubElement(work_elem, f"{ns}work-title")
-    work_title.text = song_title
+    set_or_create(root, "movement-title", song_title)
 
-    ident = root.find(f"{ns}identification")
-    if ident is None:
-        ident = ET.SubElement(root, f"{ns}identification")
-    creator_elem = ident.find(f"{ns}creator")
-    if creator_elem is None:
-        creator_elem = ET.SubElement(ident, f"{ns}creator", attrib={"type": "composer"})
-    creator_elem.text = artist_name
+    work_elem = root.find(f"{ns}work") or ET.Element(f"{ns}work")
+    if work_elem not in root: root.insert(0, work_elem)
+    set_or_create(work_elem, "work-title", song_title)
+
+    ident = root.find(f"{ns}identification") or ET.SubElement(root, f"{ns}identification")
+    creator = ident.find(f"{ns}creator") or ET.SubElement(ident, f"{ns}creator", attrib={"type": "composer"})
+    creator.text = artist_name
 
     first_part = root.find(f"{ns}part")
     if first_part is not None:
-        for measure in first_part.findall(f"{ns}measure"):
-            attrs = measure.find(f"{ns}attributes")
-            if attrs is not None:
-                clef_elem = attrs.find(f"{ns}clef")
-                if clef_elem is not None:
-                    oct_change = clef_elem.find(f"{ns}clef-octave-change")
-                    if oct_change is None:
-                        oct_change = ET.SubElement(clef_elem, f"{ns}clef-octave-change")
-                    oct_change.text = "-1"
-
         first_measure = first_part.find(f"{ns}measure")
         if first_measure is not None:
-            attrs = first_measure.find(f"{ns}attributes")
-            if attrs is None:
-                attrs = ET.Element(f"{ns}attributes")
-                first_measure.insert(0, attrs)
+            attrs = first_measure.find(f"{ns}attributes") or ET.Element(f"{ns}attributes")
+            if attrs not in first_measure: first_measure.insert(0, attrs)
 
-            staff_details = attrs.find(f"{ns}staff-details")
-            if staff_details is None:
-                staff_details = ET.SubElement(attrs, f"{ns}staff-details")
-            
-            staff_lines = staff_details.find(f"{ns}staff-lines")
-            if staff_lines is None:
-                staff_lines = ET.SubElement(staff_details, f"{ns}staff-lines")
-            
-            # Hardcoded 4-string render
-            staff_lines.text = "4"
-            tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1)]
-            
+            staff_details = attrs.find(f"{ns}staff-details") or ET.SubElement(attrs, f"{ns}staff-details")
+            set_or_create(staff_details, "staff-lines", "4")
+
             for st in list(staff_details.findall(f"{ns}staff-tuning")):
                 staff_details.remove(st)
 
-            for s_idx, (step, oct_val) in enumerate(tunings, 1):
-                s_tuning = ET.SubElement(staff_details, f"{ns}staff-tuning", attrib={"line": str(s_idx)})
+            tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1)]
+            for idx, (step, oct_val) in enumerate(tunings, 1):
+                s_tuning = ET.SubElement(staff_details, f"{ns}staff-tuning", attrib={"line": str(idx)})
                 ET.SubElement(s_tuning, f"{ns}tuning-step").text = step
                 ET.SubElement(s_tuning, f"{ns}tuning-octave").text = str(oct_val)
 
-    prev_tech_elem = None
-    prev_string_num = None
-    prev_fret_num = None
+    prev_tech, prev_string, prev_fret = None, None, None
 
     for part in root.findall(f"{ns}part"):
         part.attrib["id"] = "P1"
         for measure in part.findall(f"{ns}measure"):
-            for dummy_rest in list(measure.findall(f"{ns}note")):
-                if dummy_rest.attrib.get("print-object") == "no":
-                    measure.remove(dummy_rest)
-
             for note_elem in list(measure.findall(f"{ns}note")):
                 if note_elem.find(f"{ns}rest") is not None:
-                    prev_tech_elem = None
-                    prev_string_num = None
-                    prev_fret_num = None
+                    prev_tech, prev_string, prev_fret = None, None, None
                     continue
 
-                if 'dynamics' in note_elem.attrib:
-                    del note_elem.attrib['dynamics']
-
-                for tie_elem in note_elem.findall(f"{ns}tie"):
-                    t_type = tie_elem.attrib.get('type')
-                    if t_type:
-                        notations_elem = note_elem.find(f"{ns}notations")
-                        if notations_elem is None:
-                            notations_elem = ET.SubElement(note_elem, f"{ns}notations")
-                        if notations_elem.find(f"{ns}tied[@type='{t_type}']") is None:
-                            ET.SubElement(notations_elem, f"{ns}tied", attrib={"type": t_type})
-
                 string_num, fret_num = None, None
-                
                 notations = note_elem.find(f"{ns}notations")
                 if notations is not None:
                     technical = notations.find(f"{ns}technical")
                     if technical is not None:
-                        s_elem = technical.find(f"{ns}string")
-                        f_elem = technical.find(f"{ns}fret")
+                        s_elem, f_elem = technical.find(f"{ns}string"), technical.find(f"{ns}fret")
                         if s_elem is not None and f_elem is not None:
-                            string_num = s_elem.text
-                            fret_num = f_elem.text
-                
-                if string_num is not None and fret_num is not None:
-                    if (level >= 3 and prev_tech_elem is not None and
-                        prev_string_num == string_num and
-                        prev_fret_num is not None and fret_num != prev_fret_num):
-                        
-                        p_fret = int(prev_fret_num)
-                        c_fret = int(fret_num)
+                            string_num, fret_num = s_elem.text, f_elem.text
 
-                        if p_fret > 0 and c_fret > 0:
-                            if c_fret > p_fret:
-                                ET.SubElement(prev_tech_elem, f"{ns}hammer-on", attrib={"type": "start", "number": "1"}).text = "H"
-                                ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "stop", "number": "1"}).text = "H"
-                            elif c_fret < p_fret:
-                                ET.SubElement(prev_tech_elem, f"{ns}pull-off", attrib={"type": "start", "number": "1"}).text = "P"
-                                ET.SubElement(technical, f"{ns}pull-off", attrib={"type": "stop", "number": "1"}).text = "P"
+                if string_num and fret_num and level >= 3 and prev_tech and prev_string == string_num and prev_fret:
+                    p_fret, c_fret = int(prev_fret), int(fret_num)
+                    if p_fret > 0 and c_fret > 0 and abs(c_fret - p_fret) <= 3:
+                        h_type = "hammer-on" if c_fret > p_fret else "pull-off"
+                        label = "H" if c_fret > p_fret else "P"
+                        ET.SubElement(prev_tech, f"{ns}{h_type}", attrib={"type": "start", "number": "1"}).text = label
+                        ET.SubElement(technical, f"{ns}{h_type}", attrib={"type": "stop", "number": "1"}).text = label
 
-                    prev_tech_elem = technical
-                    prev_string_num = string_num
-                    prev_fret_num = fret_num
-                else:
-                    prev_tech_elem = None
-                    prev_string_num = None
-                    prev_fret_num = None
-
-                notehead = note_elem.find(f"{ns}notehead")
-                if notehead is not None and notehead.text in ["cross", "x"]:
-                    if level <= 1:
-                        note_elem.remove(notehead)
-                    else:
-                        notehead.text = "x"
-
-                notations = note_elem.find(f"{ns}notations")
-                if notations is not None and len(notations) == 0:
-                    note_elem.remove(notations)
-
-    for elem in root.iter():
-        if elem.text and 'stems_' in elem.text.lower():
-            elem.text = re.sub(r'(?i)stems_?', '', elem.text).strip()
+                prev_tech, prev_string, prev_fret = technical if string_num else None, string_num, fret_num
 
     if ns:
         ET.register_namespace('', ns.strip('{}'))
     if hasattr(ET, 'indent'):
         ET.indent(tree, space="  ")
+
     tree.write(xml_path, encoding='utf-8', xml_declaration=True)

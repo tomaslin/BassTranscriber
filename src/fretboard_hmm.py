@@ -2,11 +2,11 @@ import math
 
 class ErgonomicFretboardHMMSolver:
     def __init__(self, tuning_type='4_string_standard', beam_width=8):
-        self.tuning_type = '4_string_standard' # Forced across the board
+        self.tuning_type = '4_string_standard'
         self.beam_width = beam_width
         
-        # String 1 = Highest Pitch (G), String 4 = Lowest Pitch (E)
-        self.strings = {1: 43, 2: 38, 3: 33, 4: 28}  # G2, D2, A1, E1
+        # String 1 = Highest Pitch (G2=43), String 4 = Lowest Pitch (E1=28)
+        self.strings = {1: 43, 2: 38, 3: 33, 4: 28}
         self.num_frets = 20
 
     def get_valid_positions(self, midi_pitch):
@@ -23,7 +23,6 @@ class ErgonomicFretboardHMMSolver:
                 if fret == 0:
                     positions.append((s, 0, 0))
                 else:
-                    # Simandl 1-2-4 below Fret 6, OFPF above Fret 5
                     fingers = [1, 2, 4] if fret <= 5 else [1, 2, 3, 4]
                     for f in fingers:
                         positions.append((s, fret, f))
@@ -44,7 +43,6 @@ class ErgonomicFretboardHMMSolver:
         if not raw_note_events:
             return [], [], [], []
 
-        # Sort by onset time
         note_events = sorted(raw_note_events, key=lambda x: x[0])
         T = len(note_events)
 
@@ -100,15 +98,27 @@ class ErgonomicFretboardHMMSolver:
                     if is_overlapping and c_string == p_string:
                         continue
 
-                    # 1. Scale Fret Distance
+                    fret_span = abs(c_fret - p_fret) if (p_fret > 0 and c_fret > 0) else 0
+                    if fret_span > 4:
+                        inertia_penalty = 80.0 + (25.0 * (fret_span - 4))
+                    else:
+                        inertia_penalty = fret_span * 1.2
+
                     if p_fret == 0 or c_fret == 0:
                         fret_dist = 0.2
+                        stretch_penalty = 0.0
                     else:
                         d_prev = 1.0 - math.pow(2, -p_fret / 12.0)
                         d_curr = 1.0 - math.pow(2, -c_fret / 12.0)
                         fret_dist = abs(d_curr - d_prev) * 25.0
+                        
+                        if min(p_fret, c_fret) <= 5 and fret_span > 3:
+                            stretch_penalty = 35.0
+                        elif fret_span > 4:
+                            stretch_penalty = 20.0
+                        else:
+                            stretch_penalty = 0.0
 
-                    # 2. Hand Position Shift vs In-Box Movement
                     p_anchor = p_fret - (p_finger - 1) if p_finger > 0 else p_fret
                     c_anchor = c_fret - (c_finger - 1) if c_finger > 0 else c_fret
                     anchor_shift = abs(c_anchor - p_anchor)
@@ -121,7 +131,6 @@ class ErgonomicFretboardHMMSolver:
                     else:
                         transition_step_cost = (anchor_shift * 3.0) / (onset_dt + 0.08)
 
-                    # 3. Asymmetric String Skipping
                     string_diff = c_string - p_string
                     if string_diff == 0:
                         string_shift = 0.0
@@ -130,15 +139,13 @@ class ErgonomicFretboardHMMSolver:
                     else:
                         string_shift = math.pow(abs(string_diff), 1.4) * 2.5
 
-                    # 4. Open String & Slap/Pop
                     open_cost = (-3.0 if (onset_dt > 0.15 or curr_dur > 0.4) else 2.0) if c_fret == 0 else 0.0
                     tech_cost = 15.0 if (tag == "pop" and c_string > 2) else 8.0 if (tag == "slap" and c_string <= 2) else 0.0
 
-                    # 5. Local Anchor Penalty
                     anchor_dist = abs(c_fret - local_anchor) if c_fret > 0 else 0.0
                     anchor_cost = anchor_dist * 0.15
 
-                    local_cost = transition_step_cost + string_shift + open_cost + tech_cost + anchor_cost
+                    local_cost = transition_step_cost + stretch_penalty + inertia_penalty + string_shift + open_cost + tech_cost + anchor_cost
                     total_score = V[t-1][p_state] + local_cost + (0.1 * math.pow(local_cost, 2))
 
                     if total_score < best_cost:
@@ -157,7 +164,6 @@ class ErgonomicFretboardHMMSolver:
             if len(V[t]) > self.beam_width:
                 V[t] = dict(sorted(V[t].items(), key=lambda x: x[1])[:self.beam_width])
 
-        # --- O(T) Backtracking ---
         optimal_states_full = [None] * T
         best_last_state = min(V[-1], key=V[-1].get) if V[-1] else sequence_states[-1][0]
         optimal_states_full[-1] = best_last_state
@@ -168,7 +174,6 @@ class ErgonomicFretboardHMMSolver:
 
         optimal_states = [(s[0], s[1]) for s in optimal_states_full]
 
-        # --- Articulation Tagging ---
         rakes = [False] * T
         legatos = [False] * T
         slides = [False] * T
