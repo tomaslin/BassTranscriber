@@ -3,7 +3,6 @@ import fractions
 import xml.etree.ElementTree as ET
 from music21 import note
 
-
 def idiomatic_rhythm_snap(raw_dur_q, level=5, is_compound=False):
     """
     Quantizes raw note durations into musically idiomatic fractional quarter lengths
@@ -48,7 +47,6 @@ def decompose_duration_engraver_rules(dur_quarter, m_fill_offset, m_capacity, is
         if space <= 0: break
 
         if not is_compound and m_capacity == fractions.Fraction(4, 1):
-            # Force boundary split at Beat 3 (offset 2.0)
             if curr_offset < fractions.Fraction(2, 1) and (curr_offset + rem) > fractions.Fraction(2, 1):
                 take = fractions.Fraction(2, 1) - curr_offset
             else:
@@ -70,39 +68,40 @@ def consolidate_measure_notation(measure):
     """
     elems = list(measure.notesAndRests)
     if not elems: return
-    i = 0
-    while i < len(elems) - 1:
-        curr_el, next_el = elems[i], elems[i + 1]
-
-        if isinstance(curr_el, note.Rest) and isinstance(next_el, note.Rest):
-            curr_el.quarterLength += next_el.quarterLength
-            measure.remove(next_el)
-            elems.pop(i + 1)
-            continue
-
-        if (isinstance(curr_el, note.Note) and isinstance(next_el, note.Note) and
-                curr_el.pitch.midi == next_el.pitch.midi and curr_el.tie and
-                curr_el.tie.type in ['start', 'continue']):
-
-            curr_el.quarterLength += next_el.quarterLength
-
-            c_type = curr_el.tie.type
+    
+    consolidated = []
+    curr = elems[0]
+    
+    for next_el in elems[1:]:
+        if isinstance(curr, note.Rest) and isinstance(next_el, note.Rest):
+            curr.quarterLength += next_el.quarterLength
+        elif (isinstance(curr, note.Note) and isinstance(next_el, note.Note) and
+                curr.pitch.midi == next_el.pitch.midi and curr.tie and
+                curr.tie.type in ['start', 'continue']):
+            
+            curr.quarterLength += next_el.quarterLength
+            
+            c_type = curr.tie.type
             n_type = next_el.tie.type if next_el.tie else None
 
             if c_type == 'start' and n_type == 'stop':
-                curr_el.tie = None
+                curr.tie = None
             elif c_type == 'start' and n_type == 'continue':
-                curr_el.tie.type = 'start'
+                curr.tie.type = 'start'
             elif c_type == 'continue' and n_type == 'stop':
-                curr_el.tie.type = 'stop'
+                curr.tie.type = 'stop'
             elif c_type == 'continue' and n_type == 'continue':
-                curr_el.tie.type = 'continue'
-
-            measure.remove(next_el)
-            elems.pop(i + 1)
-            continue
-
-        i += 1
+                curr.tie.type = 'continue'
+        else:
+            consolidated.append(curr)
+            curr = next_el
+            
+    consolidated.append(curr)
+    
+    for el in elems:
+        measure.remove(el)
+    for el in consolidated:
+        measure.append(el)
 
 
 def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type, level=5):
@@ -110,12 +109,11 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
     Performs full DOM post-processing:
     1. Removes binary wrapper headers and non-XML string noise.
     2. Injects proper score metadata, bass clef octave transposition (-1), and staff tuning details.
-    3. Converts internal string/fret markers (S1:F3) into native <technical> tags.
+    3. Reads native <technical> tags injected by music21 to process articulation constraints.
     4. Enforces valid hammer-on/pull-off spanners (excluding open strings).
     5. Synchronizes sound <tie> elements with visual <tied> notation tags.
     6. Purges leftover dynamics attributes and orphaned lyrics.
     """
-    # Phase 1: Raw String Pre-pass
     try:
         with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
@@ -133,7 +131,6 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
     except Exception as e:
         print(f"Warning during string pre-clean pass: {e}")
 
-    # Phase 2: XML DOM Processing
     tree = ET.parse(xml_path)
     root = tree.getroot()
     ns = root.tag.split('}')[0] + '}' if '}' in root.tag else ""
@@ -171,7 +168,6 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
         creator_elem = ET.SubElement(ident, f"{ns}creator", attrib={"type": "composer"})
     creator_elem.text = artist_name
 
-    # Set electric bass transposition (-1 octave) and staff details
     first_part = root.find(f"{ns}part")
     if first_part is not None:
         for measure in first_part.findall(f"{ns}measure"):
@@ -198,11 +194,10 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
             staff_lines = staff_details.find(f"{ns}staff-lines")
             if staff_lines is None:
                 staff_lines = ET.SubElement(staff_details, f"{ns}staff-lines")
-            staff_lines.text = str(5 if tuning_type == '5_string_low_b' else 4)
             
-            tunings = {'5_string_low_b': [('G', 2), ('D', 2), ('A', 1), ('E', 1), ('B', 0)],
-                       '4_string_drop_d': [('G', 2), ('D', 2), ('A', 1), ('D', 1)],
-                       '4_string_standard': [('G', 2), ('D', 2), ('A', 1), ('E', 1)]}.get(tuning_type, [('G', 2), ('D', 2), ('A', 1), ('E', 1)])
+            # Hardcoded 4-string render
+            staff_lines.text = "4"
+            tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1)]
             
             for st in list(staff_details.findall(f"{ns}staff-tuning")):
                 staff_details.remove(st)
@@ -233,7 +228,6 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
                 if 'dynamics' in note_elem.attrib:
                     del note_elem.attrib['dynamics']
 
-                # Synchronize sound <tie> elements with visual <notations><tied> elements
                 for tie_elem in note_elem.findall(f"{ns}tie"):
                     t_type = tie_elem.attrib.get('type')
                     if t_type:
@@ -245,35 +239,17 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
 
                 string_num, fret_num = None, None
                 
-                for lyric_elem in list(note_elem.findall(f"{ns}lyric")):
-                    text_elem = lyric_elem.find(f"{ns}text")
-                    if text_elem is not None and text_elem.text and 'S' in text_elem.text and ':F' in text_elem.text:
-                        try:
-                            txt = text_elem.text.strip()
-                            s_part, f_part = txt.split(':F')
-                            string_num = s_part.replace('S', '').strip()
-                            fret_num = f_part.strip()
-                        except Exception:
-                            pass
-                    note_elem.remove(lyric_elem)
-
-                if string_num is not None and fret_num is not None:
-                    notations = note_elem.find(f"{ns}notations")
-                    if notations is None:
-                        notations = ET.SubElement(note_elem, f"{ns}notations")
+                notations = note_elem.find(f"{ns}notations")
+                if notations is not None:
                     technical = notations.find(f"{ns}technical")
-                    if technical is None:
-                        technical = ET.SubElement(notations, f"{ns}technical")
-
-                    for old_s in list(technical.findall(f"{ns}string")):
-                        technical.remove(old_s)
-                    for old_f in list(technical.findall(f"{ns}fret")):
-                        technical.remove(old_f)
-
-                    ET.SubElement(technical, f"{ns}string").text = str(string_num)
-                    ET.SubElement(technical, f"{ns}fret").text = str(fret_num)
-
-                    # Guard: Require non-zero frets for hammer-ons and pull-offs
+                    if technical is not None:
+                        s_elem = technical.find(f"{ns}string")
+                        f_elem = technical.find(f"{ns}fret")
+                        if s_elem is not None and f_elem is not None:
+                            string_num = s_elem.text
+                            fret_num = f_elem.text
+                
+                if string_num is not None and fret_num is not None:
                     if (level >= 3 and prev_tech_elem is not None and
                         prev_string_num == string_num and
                         prev_fret_num is not None and fret_num != prev_fret_num):

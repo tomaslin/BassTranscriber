@@ -2,22 +2,18 @@ import math
 
 class ErgonomicFretboardHMMSolver:
     def __init__(self, tuning_type='4_string_standard', beam_width=8):
-        self.tuning_type = tuning_type
+        self.tuning_type = '4_string_standard' # Forced across the board
         self.beam_width = beam_width
         
-        # String 1 = Highest Pitch (G), Highest Key = Lowest Pitch (E/B)
-        if tuning_type == '5_string_low_b':
-            self.strings = {1: 43, 2: 38, 3: 33, 4: 28, 5: 23}  # G2, D2, A1, E1, B0
-        elif tuning_type == '4_string_drop_d':
-            self.strings = {1: 43, 2: 38, 3: 33, 4: 26}        # G2, D2, A1, D1
-        else:
-            self.strings = {1: 43, 2: 38, 3: 33, 4: 28}        # G2, D2, A1, E1
+        # String 1 = Highest Pitch (G), String 4 = Lowest Pitch (E)
+        self.strings = {1: 43, 2: 38, 3: 33, 4: 28}  # G2, D2, A1, E1
         self.num_frets = 20
 
     def get_valid_positions(self, midi_pitch):
+        # Fold into 4-string bass range
         while midi_pitch > 67:
             midi_pitch -= 12
-        while midi_pitch < 23:
+        while midi_pitch < 28:
             midi_pitch += 12
         
         positions = []
@@ -79,7 +75,6 @@ class ErgonomicFretboardHMMSolver:
             V[0][state] = box_cost + tech_cost + anchor_cost
             backpointer[0][state] = None
 
-        # Apply initial Beam Search
         if len(V[0]) > self.beam_width:
             V[0] = dict(sorted(V[0].items(), key=lambda x: x[1])[:self.beam_width])
 
@@ -93,14 +88,13 @@ class ErgonomicFretboardHMMSolver:
             is_overlapping = curr_onset < prev_offset
             tag = note_events[t][5] if len(note_events[t]) > 5 else None
             
-            # Dynamic sliding window anchor for register changes
             local_anchor = self._get_local_anchor_fret(note_events, t)
 
             for c_state in sequence_states[t]:
                 c_string, c_fret, c_finger = c_state
                 best_cost, best_prev = float('inf'), None
 
-                for p_state in V[t-1]:  # Only iterate over survived beam states
+                for p_state in V[t-1]:
                     p_string, p_fret, p_finger = p_state
                     
                     if is_overlapping and c_string == p_string:
@@ -154,14 +148,12 @@ class ErgonomicFretboardHMMSolver:
                     V[t][c_state] = best_cost
                     backpointer[t][c_state] = best_prev
 
-            # Fallback recovery
             if not V[t]:
                 fallback_prev = min(V[t-1], key=V[t-1].get) if V[t-1] else sequence_states[t-1][0]
                 for c_state in sequence_states[t]:
                     V[t][c_state] = V[t-1].get(fallback_prev, 0.0) + 100.0
                     backpointer[t][c_state] = fallback_prev
 
-            # Beam Search Pruning for current frame
             if len(V[t]) > self.beam_width:
                 V[t] = dict(sorted(V[t].items(), key=lambda x: x[1])[:self.beam_width])
 
@@ -185,11 +177,9 @@ class ErgonomicFretboardHMMSolver:
             p_string, p_fret = optimal_states_full[i-1][0], optimal_states_full[i-1][1]
             c_string, c_fret = optimal_states_full[i][0], optimal_states_full[i][1]
 
-            # Rake
             if (c_string - p_string) == 1 and onset_dt < 0.12:
                 rakes[i] = True
 
-            # Legato vs Slide on same string
             if c_string == p_string and p_fret > 0 and c_fret > 0:
                 fret_diff = abs(c_fret - p_fret)
                 if fret_diff in [1, 2, 3] and onset_dt < 0.05:
