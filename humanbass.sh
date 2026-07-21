@@ -70,18 +70,15 @@ if [ ! -d "$ENV_DIR" ]; then
     "$PYTHON_BIN" -m venv "$ENV_DIR"
 fi
 
-source "$ENV_DIR/bin/activate"
-
-pip install --upgrade pip --quiet
-pip install --quiet \
+"$ENV_DIR/bin/pip" install --upgrade pip --quiet
+"$ENV_DIR/bin/pip" install --quiet \
     "setuptools<82" \
     "numpy==1.26.4" \
     "scipy==1.14.1" \
     "soundfile==0.12.1" \
     "soxr==0.3.7" \
     "librosa>=0.10.2" \
-    "music21==9.1.0" \
-    "resampy==0.4.2"
+    "music21==9.1.0"
 
 # ------------------------------------------------------------------------------
 # 3. Production Python Engine Generation
@@ -99,7 +96,7 @@ import scipy.signal as signal
 from scipy.ndimage import median_filter
 import librosa
 import soundfile as sf
-from music21 import stream, note, pitch, meter, tie, articulations, tempo, clef, instrument, metadata, key, spanner
+from music21 import stream, note, pitch, meter, tie, articulations, tempo, clef, instrument, metadata, key, spanner, dynamics
 
 
 def parse_metadata_from_path(folder_path):
@@ -134,6 +131,9 @@ def detect_key_signature(audio_y, sr):
     chroma = librosa.feature.chroma_cqt(y=audio_y, sr=sr)
     chroma_sum = np.sum(chroma, axis=1)
 
+    if np.sum(chroma_sum) == 0:
+        return key.Key('C')
+
     major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
     minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 2.98, 2.69, 3.34, 3.17])
 
@@ -146,6 +146,9 @@ def detect_key_signature(audio_y, sr):
         rot_chroma = np.roll(chroma_sum, -i)
         maj_corr = np.corrcoef(rot_chroma, major_profile)[0, 1]
         min_corr = np.corrcoef(rot_chroma, minor_profile)[0, 1]
+
+        maj_corr = 0.0 if np.isnan(maj_corr) else maj_corr
+        min_corr = 0.0 if np.isnan(min_corr) else min_corr
 
         if maj_corr > best_score:
             best_score = maj_corr
@@ -173,11 +176,17 @@ def decompose_duration(dur_quarter, is_compound=False):
         except Exception:
             return [fractions.Fraction(1, 4)]
 
-    standard_units = [
-        fractions.Fraction(4, 1), fractions.Fraction(3, 1), fractions.Fraction(2, 1),
-        fractions.Fraction(3, 2), fractions.Fraction(1, 1), fractions.Fraction(3, 4),
-        fractions.Fraction(1, 2), fractions.Fraction(1, 4)
-    ]
+    if is_compound:
+        standard_units = [
+            fractions.Fraction(6, 1), fractions.Fraction(3, 1), fractions.Fraction(3, 2),
+            fractions.Fraction(3, 4), fractions.Fraction(1, 2), fractions.Fraction(1, 4)
+        ]
+    else:
+        standard_units = [
+            fractions.Fraction(4, 1), fractions.Fraction(3, 1), fractions.Fraction(2, 1),
+            fractions.Fraction(3, 2), fractions.Fraction(1, 1), fractions.Fraction(3, 4),
+            fractions.Fraction(1, 2), fractions.Fraction(1, 4)
+        ]
 
     pieces = []
     while rem > 0:
@@ -278,11 +287,11 @@ class ErgonomicFretboardHMMSolver:
     def __init__(self, tuning_type='4_string_standard'):
         self.tuning_type = tuning_type
         if tuning_type == '5_string_low_b':
-            self.strings = {1: 23, 2: 28, 3: 33, 4: 38, 5: 43}
+            self.strings = {1: 43, 2: 38, 3: 33, 4: 28, 5: 23}
         elif tuning_type == '4_string_drop_d':
-            self.strings = {1: 26, 2: 33, 3: 38, 4: 43}
+            self.strings = {1: 43, 2: 38, 3: 33, 4: 26}
         else:
-            self.strings = {1: 28, 2: 33, 3: 38, 4: 43}
+            self.strings = {1: 43, 2: 38, 3: 33, 4: 28}
         
         self.num_frets = 22
 
@@ -318,9 +327,9 @@ class ErgonomicFretboardHMMSolver:
             box_cost = 0.0 if (1 <= fret <= 5 or fret == 0) else (fret - 5) * 0.3
             
             tech_cost = 0.0
-            if tag == "pop" and string_num < 3:
+            if tag == "pop" and string_num > 2:
                 tech_cost += 10.0
-            elif tag == "slap" and string_num > 2:
+            elif tag == "slap" and string_num < 3:
                 tech_cost += 5.0
 
             V[0][state] = -(box_cost + tech_cost)
@@ -355,9 +364,9 @@ class ErgonomicFretboardHMMSolver:
                     high_fret_cost = (c_fret - 12) * 0.6 if c_fret > 12 else 0.0
 
                     tech_cost = 0.0
-                    if tag == "pop" and c_string < 3:
+                    if tag == "pop" and c_string > 2:
                         tech_cost += 15.0
-                    elif tag == "slap" and c_string > 2:
+                    elif tag == "slap" and c_string < 3:
                         tech_cost += 8.0
 
                     total_trans_cost = shift_cost + string_jump_cost + high_fret_cost + tech_cost
@@ -389,7 +398,7 @@ class ErgonomicFretboardHMMSolver:
             curr_string, curr_fret = optimal_states[i]
             dt = note_events[i][0] - note_events[i-1][1]
             
-            if curr_string < prev_string and dt < 0.12:
+            if curr_string > prev_string and dt < 0.12:
                 rakes[i] = True
 
             if curr_string == prev_string and abs(curr_fret - prev_fret) in [1, 2, 3] and dt < 0.04:
@@ -400,9 +409,9 @@ class ErgonomicFretboardHMMSolver:
 
 def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type):
     """
-    DOM Sanitizer & Strict Dual-Staff Builder.
-    Clones measure notes so Staff 1 is Notation (Bass Clef) and Staff 2 is TAB.
-    Injects missing <part-list> and proper XML headers.
+    DOM Sanitizer & Technical Notation Injector.
+    Injects technical string/fret data, hammer-ons/pull-offs, dead notes,
+    and adds proper MusicXML <staff-details> attributes.
     """
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -417,10 +426,18 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
     part_list = root.find(f"{ns}part-list")
     if part_list is None:
         part_list = ET.Element(f"{ns}part-list")
-        score_part = ET.SubElement(part_list, f"{ns}score-part", attrib={"id": "P1"})
-        part_name = ET.SubElement(score_part, f"{ns}part-name")
-        part_name.text = "Electric Bass"
         root.insert(0, part_list)
+    
+    score_part = part_list.find(f"{ns}score-part")
+    if score_part is None:
+        score_part = ET.SubElement(part_list, f"{ns}score-part", attrib={"id": "P1"})
+    else:
+        score_part.attrib["id"] = "P1"
+
+    part_name = score_part.find(f"{ns}part-name")
+    if part_name is None:
+        part_name = ET.SubElement(score_part, f"{ns}part-name")
+    part_name.text = "Electric Bass"
 
     # 2. Work & Identification Metadata
     work_elem = root.find(f"{ns}work")
@@ -440,55 +457,49 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
         creator_elem = ET.SubElement(ident, f"{ns}creator", attrib={"type": "composer"})
     creator_elem.text = artist_name
 
-    # 3. String Tunings Definition
-    if tuning_type == '5_string_low_b':
-        tunings = [("1", "B", "0"), ("2", "E", "1"), ("3", "A", "1"), ("4", "D", "2"), ("5", "G", "2")]
-    elif tuning_type == '4_string_drop_d':
-        tunings = [("1", "D", "1"), ("2", "A", "1"), ("3", "D", "2"), ("4", "G", "2")]
-    else:
-        tunings = [("1", "E", "1"), ("2", "A", "1"), ("3", "D", "2"), ("4", "G", "2")]
+    # 3. Inject Instrument Staff Details (Tuning & Lines) into Measure 1
+    first_part = root.find(f"{ns}part")
+    if first_part is not None:
+        first_measure = first_part.find(f"{ns}measure")
+        if first_measure is not None:
+            attrs = first_measure.find(f"{ns}attributes")
+            if attrs is None:
+                attrs = ET.Element(f"{ns}attributes")
+                first_measure.insert(0, attrs)
 
-    num_strings = len(tunings)
+            staff_details = ET.SubElement(attrs, f"{ns}staff-details")
+            num_strings = 5 if tuning_type == '5_string_low_b' else 4
+            ET.SubElement(staff_details, f"{ns}staff-lines").text = str(num_strings)
 
-    # 4. Construct Dual Staff Layout Across Measures
+            tuning_map = {
+                '5_string_low_b': [('G', 2), ('D', 2), ('A', 1), ('E', 1), ('B', 0)],
+                '4_string_drop_d': [('G', 2), ('D', 2), ('A', 1), ('D', 1)],
+                '4_string_standard': [('G', 2), ('D', 2), ('A', 1), ('E', 1)]
+            }
+            tunings = tuning_map.get(tuning_type, tuning_map['4_string_standard'])
+            for s_idx, (step, oct_val) in enumerate(tunings, 1):
+                s_tuning = ET.SubElement(staff_details, f"{ns}staff-tuning", attrib={"line": str(s_idx)})
+                ET.SubElement(s_tuning, f"{ns}tuning-step").text = step
+                ET.SubElement(s_tuning, f"{ns}tuning-octave").text = str(oct_val)
+
+    # 4. Technical Notation Attachment & Dynamic Refinement
+    prev_fret_num = None
+    prev_string_num = None
+
     for part in root.findall(f"{ns}part"):
         part.attrib["id"] = "P1"
         
         for measure in part.findall(f"{ns}measure"):
-            if measure.attrib.get('number') == '1':
-                attributes = measure.find(f"{ns}attributes")
-                if attributes is None:
-                    attributes = ET.Element(f"{ns}attributes")
-                    measure.insert(0, attributes)
+            for dummy_rest in list(measure.findall(f"{ns}note")):
+                if dummy_rest.attrib.get("print-object") == "no":
+                    measure.remove(dummy_rest)
 
-                staves_elem = attributes.find(f"{ns}staves")
-                if staves_elem is None:
-                    staves_elem = ET.SubElement(attributes, f"{ns}staves")
-                staves_elem.text = "2"
-
-                clef_tab = ET.SubElement(attributes, f"{ns}clef", attrib={"number": "2"})
-                ET.SubElement(clef_tab, f"{ns}sign").text = "TAB"
-                ET.SubElement(clef_tab, f"{ns}line").text = "5"
-
-                staff_details = ET.SubElement(attributes, f"{ns}staff-details", attrib={"number": "2"})
-                staff_lines = ET.SubElement(staff_details, f"{ns}staff-lines")
-                staff_lines.text = str(num_strings)
-
-                for line, step, octv in tunings:
-                    st = ET.SubElement(staff_details, f"{ns}staff-tuning", attrib={"line": line})
-                    ET.SubElement(st, f"{ns}tuning-step").text = step
-                    ET.SubElement(st, f"{ns}tuning-octave").text = octv
-
-            # Separate Staff 1 (Bass Clef Notation) and Staff 2 (Tablature)
             notes_to_process = list(measure.findall(f"{ns}note"))
             for note_elem in notes_to_process:
-                # Assign primary note to Staff 1
-                staff_elem = note_elem.find(f"{ns}staff")
-                if staff_elem is None:
-                    staff_elem = ET.SubElement(note_elem, f"{ns}staff")
-                staff_elem.text = "1"
+                # Strip raw numeric dynamics/velocity from individual notes
+                if 'dynamics' in note_elem.attrib:
+                    del note_elem.attrib['dynamics']
 
-                # Extract embedded lyric string/fret details
                 lyric_elem = note_elem.find(f"{ns}lyric")
                 string_num, fret_num = None, None
                 if lyric_elem is not None:
@@ -502,32 +513,38 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
                             pass
                         note_elem.remove(lyric_elem)
 
-                # Clone note event onto Staff 2 for TAB rendering if string & fret exist
                 if string_num is not None and fret_num is not None:
-                    tab_note = ET.Element(f"{ns}note")
+                    notations = note_elem.find(f"{ns}notations")
+                    if notations is None:
+                        notations = ET.SubElement(note_elem, f"{ns}notations")
                     
-                    # Pitch / Rest
-                    pitch_elem = note_elem.find(f"{ns}pitch")
-                    if pitch_elem is not None:
-                        tab_note.append(ET.fromstring(ET.tostring(pitch_elem)))
+                    technical = notations.find(f"{ns}technical")
+                    if technical is None:
+                        technical = ET.SubElement(notations, f"{ns}technical")
 
-                    # Duration & Type
-                    for tag_name in ['duration', 'type', 'voice']:
-                        e = note_elem.find(f"{ns}{tag_name}")
-                        if e is not None:
-                            tab_note.append(ET.fromstring(ET.tostring(e)))
+                    string_el = ET.SubElement(technical, f"{ns}string")
+                    string_el.text = str(string_num)
+                    fret_el = ET.SubElement(technical, f"{ns}fret")
+                    fret_el.text = str(fret_num)
 
-                    tab_staff = ET.SubElement(tab_note, f"{ns}staff")
-                    tab_staff.text = "2"
+                    # Inject Hammer-on / Pull-off technical tags where slurs exist
+                    if prev_string_num == string_num and prev_fret_num is not None and fret_num != prev_fret_num:
+                        slur_elem = notations.find(f"{ns}slur")
+                        if slur_elem is not None:
+                            curr_f = int(fret_num)
+                            prev_f = int(prev_fret_num)
+                            if curr_f > prev_f:
+                                ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "stop"}).text = "H"
+                            elif curr_f < prev_f:
+                                ET.SubElement(technical, f"{ns}pull-off", attrib={"type": "stop"}).text = "P"
 
-                    notations = ET.SubElement(tab_note, f"{ns}notations")
-                    technical = ET.SubElement(notations, f"{ns}technical")
-                    ET.SubElement(technical, f"{ns}string").text = string_num
-                    ET.SubElement(technical, f"{ns}fret").text = fret_num
+                    prev_string_num = string_num
+                    prev_fret_num = fret_num
 
-                    # Place TAB note immediately after its notation counterpart
-                    note_idx = list(measure).index(note_elem)
-                    measure.insert(note_idx + 1, tab_note)
+                # Convert ghost noteheads to muted x noteheads
+                notehead = note_elem.find(f"{ns}notehead")
+                if notehead is not None and notehead.text == "cross":
+                    notehead.text = "x"
 
     # 5. Clean Metadata Text
     for elem in root.iter():
@@ -677,9 +694,9 @@ def process_folder(stem_folder):
     fretboard_path, rakes, legatos = hmm.solve(performance_layer)
 
     # --------------------------------------------------------------------------
-    # PHASE 5: Measure Assembly & Clean MusicXML Generation
+    # PHASE 5: Measure Assembly, Dynamic Mapping & Clean MusicXML Generation
     # --------------------------------------------------------------------------
-    print("[Phase 5/5] Generating Dual-Staff Measure-Bound Notation...")
+    print("[Phase 5/5] Generating Measure-Bound Notation...")
 
     sec_per_quarter = 60.0 / bpm
     first_onset = performance_layer[0][0] if performance_layer else 0.0
@@ -731,6 +748,8 @@ def process_folder(stem_folder):
     curr_measure.insert(0.0, detected_key)
     curr_measure.insert(0.0, tempo.MetronomeMark(number=int(round(bpm))))
 
+    # Phrase Dynamic Tracking
+    last_dynamic_str = None
     prev_note_obj = None
 
     for event in quantized_timeline:
@@ -761,6 +780,16 @@ def process_folder(stem_folder):
             rem_dur = dur_q
             is_first_piece = True
 
+            # Convert amplitude to coarse dynamic marking
+            if amp < 0.35:
+                curr_dynamic_str = 'p'
+            elif amp < 0.65:
+                curr_dynamic_str = 'mf'
+            elif amp < 0.85:
+                curr_dynamic_str = 'f'
+            else:
+                curr_dynamic_str = 'ff'
+
             while rem_dur > 0:
                 space = m_capacity - m_fill
                 if space <= 0:
@@ -777,8 +806,11 @@ def process_folder(stem_folder):
                     n.quarterLength = float(sub_dur)
                     n.voice = 1
 
-                    vel = int(amp * 127)
-                    n.volume.velocity = min(127, max(30, vel))
+                    # Apply phrase dynamic marking only when dynamic state changes
+                    if is_first_piece and p_idx == 0 and curr_dynamic_str != last_dynamic_str:
+                        d_mark = dynamics.Dynamic(curr_dynamic_str)
+                        curr_measure.insert(m_fill, d_mark)
+                        last_dynamic_str = curr_dynamic_str
 
                     if is_first_piece and p_idx == 0:
                         if tag == "ghost":
@@ -819,6 +851,8 @@ def process_folder(stem_folder):
                 curr_measure.append(r)
         m21_part.append(curr_measure)
 
+    # Post-process score with quantize and makeNotation to beam properly and consolidate rests
+    m21_part = m21_part.quantize(quarterLengthDivisors=(4,)).makeNotation()
     m21_score.append(m21_part)
 
     xml_out = os.path.join(output_dir, f"{base_name}.musicxml")
@@ -826,8 +860,8 @@ def process_folder(stem_folder):
 
     sanitize_and_inject_tablature(xml_out, artist_name, song_title, tuning)
 
-    print(f"\nSUCCESS: Generated Dual-Staff MusicXML Asset inside {output_dir}")
-    print(f" -> Notation & TAB (MusicXML): {xml_out}\n")
+    print(f"\nSUCCESS: Generated Clean MusicXML Asset inside {output_dir}")
+    print(f" -> Notation (MusicXML): {xml_out}\n")
 
 
 if __name__ == "__main__":
