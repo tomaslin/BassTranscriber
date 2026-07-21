@@ -1,14 +1,31 @@
 #!/bin/bash
 set -x
 # split.sh
-# Usage: ./split.sh path/to/file1.mp3 path/to/file2.wav path/to/file3.mp3
+# Usage: ./split.sh [-d DURATION_SEC] path/to/file1.mp3 [path/to/file2.wav ...]
 
 set -euo pipefail
 
-# Check if at least one argument was passed
-if [ $# -eq 0 ]; then
+# Parse optional --duration / -d flag while keeping remaining positional arguments
+DURATION=""
+FILES=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -d|--duration)
+            DURATION="$2"
+            shift 2
+            ;;
+        *)
+            FILES+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Check if at least one file argument was passed
+if [ ${#FILES[@]} -eq 0 ]; then
     echo "❌ Error: Missing input audio file target(s)."
-    echo "Usage: $0 <path_to_audio_file1.mp3> [path_to_audio_file2.mp3 ...]"
+    echo "Usage: $0 [-d DURATION_IN_SECONDS] <path_to_audio_file1.mp3> [path_to_audio_file2.mp3 ...]"
     exit 1
 fi
 
@@ -26,6 +43,7 @@ pip install "demucs-mlx[convert]" librosa soundfile
 
 cat << 'EOF' > run_split.py
 import sys
+import argparse
 from pathlib import Path
 import numpy as np
 import librosa
@@ -33,7 +51,7 @@ import soundfile as sf
 import tempfile
 from demucs_mlx.api import Separator, save_audio
 
-def process_file(file_path_str, separator):
+def process_file(file_path_str, separator, duration=None):
     audio_path = Path(file_path_str).resolve()
     
     if not audio_path.exists():
@@ -45,11 +63,14 @@ def process_file(file_path_str, separator):
     
     print(f"\n==================================================")
     print(f"🎵 Processing: {audio_path.name}")
+    if duration:
+        print(f"⏱️  Duration limited to: {duration} seconds")
     print(f"==================================================")
     print(f"[1/2] Loading audio file into memory...")
     
     # mono=False ensures we preserve standard stereo layout
-    y, sr = librosa.load(audio_path, sr=None, mono=False)
+    # Pass duration to librosa to load only the target length directly
+    y, sr = librosa.load(audio_path, sr=None, mono=False, duration=duration)
     
     if y.ndim == 1:
         y = y[np.newaxis, :]
@@ -97,14 +118,20 @@ def process_file(file_path_str, separator):
         print(f"Saved complete stem: {stem_path}")
 
 def main():
+    parser = argparse.ArgumentParser(description="Process audio files with Demucs stem separation.")
+    parser.add_argument("files", nargs="+", help="Audio files to process")
+    parser.add_argument("-d", "--duration", type=float, default=None, help="Optional duration limit in seconds")
+    
+    args = parser.parse_args()
+
     # Instantiate the separator once so it doesn't reload for every file
     print("Initializing Demucs separator model...")
     separator = Separator(model="htdemucs_6s")
     
     # Process all file arguments passed from Bash
-    for file_path in sys.argv[1:]:
+    for file_path in args.files:
         try:
-            process_file(file_path, separator)
+            process_file(file_path, separator, duration=args.duration)
         except Exception as e:
             print(f"❌ Failed to process {file_path}: {e}")
 
@@ -112,5 +139,11 @@ if __name__ == "__main__":
     main()
 EOF
 
-# Execute the chunking pipeline passing all provided arguments ($@)
-python run_split.py "$@"
+# Build option flags to pass forward to Python
+PY_ARGS=()
+if [ -n "$DURATION" ]; then
+    PY_ARGS+=("-d" "$DURATION")
+fi
+
+# Execute the chunking pipeline passing optional flags followed by file paths
+python run_split.py "${PY_ARGS[@]}" "${FILES[@]}"

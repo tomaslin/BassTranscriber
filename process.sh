@@ -51,26 +51,29 @@ ENV_DIR=".venv_bass"
 mkdir -p "$OUT_DIR"
 
 if [ ! -d "$ENV_DIR" ]; then
-    $PY_CMD -m venv "$ENV_DIR" > /dev/null 2>&1
+    echo "[*] Initializing virtual environment..."
+    $PY_CMD -m venv "$ENV_DIR"
 fi
 source "$ENV_DIR/bin/activate"
 
-"$ENV_DIR/bin/python" -m pip install --upgrade pip wheel > /dev/null 2>&1
-"$ENV_DIR/bin/python" -m pip install "setuptools<82" > /dev/null 2>&1
+echo "[*] Verifying and updating core packaging systems..."
+"$ENV_DIR/bin/python" -m pip install --upgrade pip wheel
+"$ENV_DIR/bin/python" -m pip install "setuptools<82"
 
 OS_NAME=$(uname -s)
 ARCH_NAME=$(uname -m)
 
+echo "[*] Resolving matrix math environment variables ($OS_NAME-$ARCH_NAME)..."
 if [ "$OS_NAME" = "Darwin" ] && [ "$ARCH_NAME" = "arm64" ]; then
-    "$ENV_DIR/bin/python" -m pip install --no-cache-dir "tensorflow-macos<2.16.0" "tensorflow-metal==1.1.0" > /dev/null 2>&1
+    "$ENV_DIR/bin/python" -m pip install --no-cache-dir "tensorflow-macos<2.16.0" "tensorflow-metal==1.1.0"
 else
-    "$ENV_DIR/bin/python" -m pip install --no-cache-dir "tensorflow<2.16.0" > /dev/null 2>&1
+    "$ENV_DIR/bin/python" -m pip install --no-cache-dir "tensorflow<2.16.0"
 fi
 
 "$ENV_DIR/bin/python" -m pip install --no-cache-dir \
     "numpy==1.26.4" "scipy==1.14.1" "soundfile==0.12.1" "soxr==0.3.7" \
     "librosa>=0.10.2" "music21==9.1.0" "pretty_midi==0.2.10" \
-    "basic-pitch>=0.4.0" "resampy==0.4.2" > /dev/null 2>&1
+    "basic-pitch>=0.4.0" "resampy==0.4.2"
 
 cleanup() { rm -f run_engine_bass.py; }
 trap cleanup EXIT
@@ -149,6 +152,7 @@ def extract_kick_transients(drums_wav_path, sr=22050):
         b, a = butter(4, [40 / nyq, min(100 / nyq, 0.99)], btype='band')
         y_kick = filtfilt(b, a, y_d)
         onset_env = librosa.onset.onset_strength(y=y_kick, sr=sr)
+        # Using correct keyword signatures for explicit array configurations
         onset_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, backtrack=True)
         return librosa.frames_to_time(onset_frames, sr=sr)
     except Exception:
@@ -174,7 +178,6 @@ def auto_detect_profile(bass_wav_path, drums_wav_path):
     y_b, sr_b = librosa.load(str(bass_wav_path), sr=22050, mono=True, res_type='soxr_hq')
     if len(y_b) == 0: return "none", 120.0, y_b, sr_b
 
-    # Bass pre-filter at 800Hz to prevent high guitar overtones from distorting genre centroid
     b_feat, a_feat = butter(2, 800 / (sr_b / 2), btype='low')
     y_b_feat = filtfilt(b_feat, a_feat, y_b)
 
@@ -192,6 +195,7 @@ def auto_detect_profile(bass_wav_path, drums_wav_path):
     onset_env = librosa.onset.onset_strength(y=y_rhythm, sr=sr_rhythm)
     duration_sec = librosa.get_duration(y=y_rhythm, sr=sr_rhythm)
     
+    # Properly catching returning structures from modern librosa dependencies
     tempo_est, _ = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr_rhythm)
     bpm = float(np.median(tempo_est)) if tempo_est.size > 0 else 120.0
     
@@ -293,7 +297,9 @@ def extract_chords(y, sr, bpm):
         templates.append(np.roll(dom7_template, i)); labels.append(notes[i] + '7')
         
     templates = np.array(templates)
-    _, beat_frames = librosa.beat.beat_track(y=y, sr=sr, bpm=bpm)
+    
+    # Decoupling parameter overrides to maintain internal autocorrelation
+    _, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
     chords = []
     
     for i in range(0, len(beat_frames), 4):
@@ -340,6 +346,7 @@ def apply_human_fretboard_ergonomics(notes, baselines, string_names, genre="rock
         p_val = int(round(n["chord_pitches"][0])) if n.get("is_chord") else int(round(n["base"].pitch))
         
         valid_states = [s for s in states if s[2] == p_val]
+        # Resolving key matching structure mismatches
         if not valid_states: valid_states = [(0, max(0, p_val - baselines[0]), p_val)]
             
         step_paths = {}
@@ -378,7 +385,6 @@ def apply_human_fretboard_ergonomics(notes, baselines, string_names, genre="rock
     return [(string_names[s[0]], s[1]) for s in best_final_state[1][1]]
 
 def process_polyphony_and_chords(grid_groups, allow_chords=True, allowed_intervals=None):
-    """Enforces Low Interval Limit (LIL) for bass polyphony below E2 (MIDI 40)."""
     if allowed_intervals is None:
         allowed_intervals = [7, 12, 15, 16, 19]
         
@@ -403,7 +409,6 @@ def process_polyphony_and_chords(grid_groups, allow_chords=True, allowed_interva
             interval = abs(p1 - p2)
             min_note = min(p1, p2)
             
-            # Low Interval Limit Check: If lower note is below E2 (MIDI 40), enforce allowed intervals strictly
             is_valid_interval = interval in allowed_intervals if min_note < 40 else (interval in allowed_intervals or interval >= 5)
             
             if secondary["base"].velocity > (primary["base"].velocity * 0.60) and is_valid_interval:
@@ -465,7 +470,6 @@ def extract_timbre(y_b, sr_b, start_time, end_time):
     return "normal"
 
 def correct_octave_errors(raw_notes, y, sr):
-    """Uses YIN pitched search isolated to bass register (18Hz - 530Hz) to correct octave jumps."""
     corrected = []
     for n in raw_notes:
         start_s, end_s = int(n.start * sr), int(n.end * sr)
@@ -528,7 +532,6 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
 
     sanitized_raw_notes = []
     for ev in raw_notes:
-        # Strict Bass Fundamental Guardrail: Discard any notes outside MIDI 18 (F#0) to MIDI 72 (C5)
         if ev.pitch < 18 or ev.pitch > 72:
             continue
             
@@ -674,7 +677,6 @@ def process_score_tier(raw_notes, pitch_bends, level, genre, bpm, detected_key, 
         if timbre == "pop": music_element.addLyric('P')
         elif timbre == "slap": music_element.addLyric('T')
 
-        # Dynamically locate active string index (1 to N) based on tuning configuration
         string_num = string_names.index(s_name) + 1 if s_name in string_names else 4
         music_element.articulations.append(articulations.StringIndication(string_num))
         music_element.articulations.append(articulations.FretIndication(f_val))
