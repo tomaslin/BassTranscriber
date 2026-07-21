@@ -1,0 +1,7 @@
+setuptools<82
+numpy==1.26.4
+scipy==1.14.1
+soundfile==0.12.1
+soxr==0.3.7
+librosa>=0.10.2
+music21==9.1.0

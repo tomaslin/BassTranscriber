@@ -1,5 +1,6 @@
 .DS_Store
 stems_*
 *.mp3
-.venv*
-
+.bass_pipeline_env
+output_bass
+src/__pycache__
