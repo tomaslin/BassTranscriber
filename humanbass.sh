@@ -72,6 +72,4 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-"$ENV_DIR/bin/python" -m src.main "$@"
-
-echo "Pipeline execution finished successfully."
+"$ENV_DIR/bin/python" src/main.py "$@"

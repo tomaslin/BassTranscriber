@@ -1,7 +1,17 @@
-import re
 import fractions
 import xml.etree.ElementTree as ET
-from music21 import note, tie
+from music21 import note
+
+VALID_SINGLE_DURATIONS = [
+    fractions.Fraction(4, 1),   # Whole
+    fractions.Fraction(3, 1),   # Dotted Half
+    fractions.Fraction(2, 1),   # Half
+    fractions.Fraction(3, 2),   # Dotted Quarter (1.5)
+    fractions.Fraction(1, 1),   # Quarter
+    fractions.Fraction(3, 4),   # Dotted 8th (0.75)
+    fractions.Fraction(1, 2),   # 8th (0.5)
+    fractions.Fraction(1, 4),   # 16th (0.25)
+]
 
 
 def idiomatic_rhythm_snap(raw_dur_q, level=5, is_compound=False):
@@ -31,8 +41,24 @@ def idiomatic_rhythm_snap(raw_dur_q, level=5, is_compound=False):
     return fractions.Fraction(eighth_steps, 2)
 
 
+def _split_into_valid_units(dur_q):
+    """Decomposes any quarter duration into a list of standard MusicXML duration units."""
+    units = []
+    rem = fractions.Fraction(dur_q).limit_denominator(16)
+    for v in VALID_SINGLE_DURATIONS:
+        while rem >= v:
+            units.append(v)
+            rem -= v
+    if rem > 0:
+        units.append(rem)
+    return units or [fractions.Fraction(1, 4)]
+
+
 def decompose_duration_engraver_rules(dur_quarter, m_fill_offset, m_capacity, is_compound=False):
-    """Decomposes duration values across measure and half-measure boundaries."""
+    """
+    Decomposes duration values across measure and invisible half-measure boundaries.
+    Ensures every returned chunk is a valid, non-complex MusicXML duration.
+    """
     units = []
     rem = fractions.Fraction(dur_quarter).limit_denominator(16)
     curr_offset = fractions.Fraction(m_fill_offset).limit_denominator(16)
@@ -40,62 +66,108 @@ def decompose_duration_engraver_rules(dur_quarter, m_fill_offset, m_capacity, is
     while rem > 0:
         space = m_capacity - curr_offset
         if space <= 0:
-            break
+            space = m_capacity
+            curr_offset = fractions.Fraction(0, 1)
 
-        half_capacity = fractions.Fraction(3, 1) if is_compound and m_capacity == 6 else fractions.Fraction(2, 1)
+        if is_compound:
+            half_capacity = fractions.Fraction(3, 1) if m_capacity == 6 else fractions.Fraction(6, 1)
+        else:
+            half_capacity = fractions.Fraction(2, 1)
+
         if curr_offset < half_capacity < (curr_offset + rem):
             take = half_capacity - curr_offset
         else:
             take = min(rem, space)
 
-        units.append(take)
+        sub_chunks = _split_into_valid_units(take)
+        units.extend(sub_chunks)
+
         rem -= take
-        curr_offset += take
+        curr_offset = (curr_offset + take) % m_capacity
 
     return units or [fractions.Fraction(1, 4)]
 
 
-def consolidate_measure_notation(measure, max_rest_units=2520):
-    """Consolidates rests and adjacent tied notes within a measure."""
+def consolidate_measure_notation(measure, m_capacity=fractions.Fraction(4, 1), is_compound=False):
+    """
+    Consolidates rests according to standard engraving rules:
+    1. Fully empty measures convert to a single Full Measure Rest.
+    2. Rests never consolidate across the measure midpoint (Beat 3 in 4/4).
+    3. Merges rests only if the resulting length is a valid single duration unit.
+    4. Merges tied notes of identical pitch cleanly.
+    """
     elems = list(measure.notesAndRests)
     if not elems:
         return
 
-    max_rest_q = fractions.Fraction(max_rest_units, 5040)
-    consolidated, curr = [], elems[0]
+    # 1. Full Measure Rest Check
+    total_q = sum(fractions.Fraction(e.quarterLength).limit_denominator(16) for e in elems)
+    all_rests = all(isinstance(e, note.Rest) for e in elems)
+    if all_rests and total_q == m_capacity:
+        full_rest = note.Rest()
+        full_rest.quarterLength = float(m_capacity)
+        full_rest.fullMeasure = True
+        measure.elements = (full_rest,)
+        return
 
-    for next_el in elems[1:]:
-        if isinstance(curr, note.Note) and isinstance(next_el, note.Rest) and next_el.quarterLength <= max_rest_q:
-            curr.quarterLength += next_el.quarterLength
-        elif isinstance(curr, note.Rest) and isinstance(next_el, note.Rest):
-            curr.quarterLength += next_el.quarterLength
-        elif (isinstance(curr, note.Note) and isinstance(next_el, note.Note) and
-              curr.pitch.midi == next_el.pitch.midi and curr.tie and
-              curr.tie.type in ['start', 'continue']):
+    # 2. Beat-Aware Rest Consolidation
+    consolidated = []
+    curr_offset = fractions.Fraction(0, 1)
+    i = 0
 
-            curr.quarterLength += next_el.quarterLength
-            c_type, n_type = curr.tie.type, next_el.tie.type if next_el.tie else None
+    while i < len(elems):
+        curr = elems[i]
+        curr_q = fractions.Fraction(curr.quarterLength).limit_denominator(16)
 
-            if c_type == 'start' and n_type == 'stop':
-                curr.tie = None
-            elif c_type == 'start' and n_type == 'continue':
-                curr.tie = tie.Tie('start')
-            elif c_type == 'continue' and n_type == 'stop':
-                curr.tie = tie.Tie('stop')
-            elif c_type == 'continue' and n_type == 'continue':
-                curr.tie = tie.Tie('continue')
-        else:
-            consolidated.append(curr)
-            curr = next_el
+        if isinstance(curr, note.Rest) and (i + 1 < len(elems)) and isinstance(elems[i + 1], note.Rest):
+            next_rest = elems[i + 1]
+            next_q = fractions.Fraction(next_rest.quarterLength).limit_denominator(16)
+            combined_q = curr_q + next_q
 
-    consolidated.append(curr)
+            midpoint = m_capacity / 2
+            crosses_midpoint = (curr_offset < midpoint) and ((curr_offset + combined_q) > midpoint)
 
-    # Rebuild measure elements efficiently
-    measure.elements = tuple(consolidated)
+            # Rest merge allowed ONLY if it doesn't cross measure center AND is a standard single duration
+            if not crosses_midpoint and combined_q in VALID_SINGLE_DURATIONS:
+                curr.quarterLength = float(combined_q)
+                curr_offset += combined_q
+                consolidated.append(curr)
+                i += 2  # Skip merged rest
+                continue
+
+        consolidated.append(curr)
+        curr_offset += curr_q
+        i += 1
+
+    # 3. Simplify tied notes of identical pitch within measure
+    merged = []
+    idx = 0
+    while idx < len(consolidated):
+        elem = consolidated[idx]
+        if (
+            isinstance(elem, note.Note)
+            and elem.tie
+            and elem.tie.type in ['start', 'continue']
+            and idx + 1 < len(consolidated)
+        ):
+            next_elem = consolidated[idx + 1]
+            if isinstance(next_elem, note.Note) and next_elem.pitch == elem.pitch:
+                comb_q = fractions.Fraction(elem.quarterLength + next_elem.quarterLength).limit_denominator(16)
+                if comb_q in VALID_SINGLE_DURATIONS:
+                    elem.quarterLength = float(comb_q)
+                    if next_elem.tie and next_elem.tie.type == 'stop':
+                        elem.tie = None
+                    else:
+                        elem.tie = next_elem.tie
+                    idx += 1  # Skip merged element
+        merged.append(elem)
+        idx += 1
+
+    measure.elements = tuple(merged)
 
 
 def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type, level=5):
-    """Injects metadata and updates staff tuning and tablature annotations in MusicXML."""
+    """Injects metadata, enforces matching part IDs, and injects explicit key/time attributes in MusicXML."""
     try:
         with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
@@ -121,14 +193,20 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
         elem.text = text_val
         return elem
 
+    # Metadata: Title
     set_or_create(root, "movement-title", song_title)
 
-    work_elem = root.find(f"{ns}work") or ET.Element(f"{ns}work")
-    if work_elem not in root: root.insert(0, work_elem)
+    work_elem = root.find(f"{ns}work")
+    if work_elem is None:
+        work_elem = ET.Element(f"{ns}work")
+        root.insert(0, work_elem)
     set_or_create(work_elem, "work-title", song_title)
 
-    # Clean up and deduplicate headers/creators
-    ident = root.find(f"{ns}identification") or ET.SubElement(root, f"{ns}identification")
+    # Metadata: Creator
+    ident = root.find(f"{ns}identification")
+    if ident is None:
+        ident = ET.SubElement(root, f"{ns}identification")
+
     creators = ident.findall(f"{ns}creator")
     if creators:
         primary_creator = creators[0]
@@ -140,22 +218,43 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
         creator = ET.SubElement(ident, f"{ns}creator", attrib={"type": "composer"})
         creator.text = artist_name
 
+    # Read <score-part id="..."> and enforce matching ID on <part>
+    score_part_elem = root.find(f".//{ns}score-part")
+    score_part_id = score_part_elem.attrib.get("id", "P1") if score_part_elem is not None else "P1"
+
     first_part = root.find(f"{ns}part")
     if first_part is not None:
+        first_part.attrib["id"] = score_part_id
         first_measure = first_part.find(f"{ns}measure")
         if first_measure is not None:
-            attrs = first_measure.find(f"{ns}attributes") or ET.Element(f"{ns}attributes")
-            if attrs not in first_measure: first_measure.insert(0, attrs)
+            attrs = first_measure.find(f"{ns}attributes")
+            if attrs is None:
+                attrs = ET.Element(f"{ns}attributes")
+                first_measure.insert(0, attrs)
 
-            # Ensure Bass Clef (F4) is explicitly present
+            # Explicit <key> definition in Measure 1 attributes
+            key_elem = attrs.find(f"{ns}key")
+            if key_elem is None:
+                key_elem = ET.SubElement(attrs, f"{ns}key")
+                ET.SubElement(key_elem, f"{ns}fifths").text = "0"
+                ET.SubElement(key_elem, f"{ns}mode").text = "major"
+
+            # Explicit <time> definition in Measure 1 attributes
+            time_elem = attrs.find(f"{ns}time")
+            if time_elem is None:
+                time_elem = ET.SubElement(attrs, f"{ns}time")
+                ET.SubElement(time_elem, f"{ns}beats").text = "4"
+                ET.SubElement(time_elem, f"{ns}beat-type").text = "4"
+
             clef_elem = attrs.find(f"{ns}clef")
             if clef_elem is None:
                 clef_elem = ET.SubElement(attrs, f"{ns}clef")
             set_or_create(clef_elem, "sign", "F")
             set_or_create(clef_elem, "line", "4")
 
-            # Set staff tuning details
-            staff_details = attrs.find(f"{ns}staff-details") or ET.SubElement(attrs, f"{ns}staff-details")
+            staff_details = attrs.find(f"{ns}staff-details")
+            if staff_details is None:
+                staff_details = ET.SubElement(attrs, f"{ns}staff-details")
             set_or_create(staff_details, "staff-lines", "4")
 
             for st in list(staff_details.findall(f"{ns}staff-tuning")):
@@ -170,7 +269,7 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
     prev_tech, prev_string, prev_fret = None, None, None
 
     for part in root.findall(f"{ns}part"):
-        part.attrib["id"] = "P1"
+        part.attrib["id"] = score_part_id
         for measure in part.findall(f"{ns}measure"):
             for note_elem in list(measure.findall(f"{ns}note")):
                 if note_elem.find(f"{ns}rest") is not None:
@@ -186,7 +285,6 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
                         if s_elem is not None and f_elem is not None:
                             string_num, fret_num = s_elem.text, f_elem.text
 
-                # Fix self-referential legato bug: Only add pull-off/hammer-on if frets are DIFFERENT
                 if string_num and fret_num and level >= 3 and prev_tech and prev_string == string_num and prev_fret:
                     p_fret, c_fret = int(prev_fret), int(fret_num)
                     if p_fret > 0 and c_fret > 0 and abs(c_fret - p_fret) <= 3 and c_fret != p_fret:

@@ -1,4 +1,7 @@
 import math
+from note_event import NoteEvent
+from pitch_theory import fold_pitch_to_bass_range
+
 
 class ErgonomicFretboardHMMSolver:
     def __init__(self, tuning_type='4_string_standard', beam_width=8):
@@ -9,12 +12,8 @@ class ErgonomicFretboardHMMSolver:
         self.strings = {1: 43, 2: 38, 3: 33, 4: 28}
         self.num_frets = 20
 
-    def get_valid_positions(self, midi_pitch):
-        # Fold into 4-string bass range
-        while midi_pitch > 67:
-            midi_pitch -= 12
-        while midi_pitch < 28:
-            midi_pitch += 12
+    def get_valid_positions(self, midi_pitch: int):
+        midi_pitch = fold_pitch_to_bass_range(midi_pitch)
         
         positions = []
         for s, open_p in self.strings.items():
@@ -28,10 +27,10 @@ class ErgonomicFretboardHMMSolver:
                         positions.append((s, fret, f))
         return positions
 
-    def _get_local_anchor_fret(self, note_events, t, window=8):
+    def _get_local_anchor_fret(self, note_events: list[NoteEvent], t: int, window=8) -> float:
         start = max(0, t - window)
         end = min(len(note_events), t + window + 1)
-        local_pitches = [n[2] for n in note_events[start:end]]
+        local_pitches = [n.pitch for n in note_events[start:end]]
         
         median_pitch = sorted(local_pitches)[len(local_pitches) // 2]
         open_pitches = sorted(self.strings.values())
@@ -39,16 +38,17 @@ class ErgonomicFretboardHMMSolver:
         
         return float(max(1, min(self.num_frets, median_pitch - median_open)))
 
-    def solve(self, raw_note_events):
+    def solve(self, raw_note_events: list[NoteEvent], bpm=120.0):
         if not raw_note_events:
             return [], [], [], []
 
-        note_events = sorted(raw_note_events, key=lambda x: x[0])
+        note_events = sorted(raw_note_events, key=lambda x: x.start)
         T = len(note_events)
+        sec_per_beat = 60.0 / bpm if bpm > 0 else 0.5
 
         sequence_states = [
-            self.get_valid_positions(n[2]) or
-            self.get_valid_positions(n[2]-12) or
+            self.get_valid_positions(n.pitch) or
+            self.get_valid_positions(n.pitch - 12) or
             [(list(self.strings.keys())[0], 0, 0)]
             for n in note_events
         ]
@@ -60,11 +60,11 @@ class ErgonomicFretboardHMMSolver:
         initial_anchor = self._get_local_anchor_fret(note_events, 0)
         for state in sequence_states[0]:
             string_num, fret, finger = state
-            tag = note_events[0][5] if len(note_events[0]) > 5 else None
-            note_dur = note_events[0][1] - note_events[0][0]
+            tag = note_events[0].tag
+            note_dur = note_events[0].duration
             
             open_cost = (-2.0 if note_dur > 0.3 else 1.5) if fret == 0 else 0.0
-            box_cost = (fret * 0.08) + open_cost
+            box_cost = (fret * 0.08 if fret <= 7 else fret * 0.20) + open_cost
             tech_cost = 15.0 if (tag == "pop" and string_num > 2) else 8.0 if (tag == "slap" and string_num <= 2) else 0.0
             
             anchor_dist = abs(fret - initial_anchor) if fret > 0 else 0.0
@@ -78,13 +78,15 @@ class ErgonomicFretboardHMMSolver:
 
         # --- Forward Pass ---
         for t in range(1, T):
-            prev_onset, prev_offset = note_events[t-1][0], note_events[t-1][1]
-            curr_onset, curr_offset = note_events[t][0], note_events[t][1]
+            prev_onset, prev_offset = note_events[t-1].start, note_events[t-1].end
+            curr_onset, curr_offset = note_events[t].start, note_events[t].end
             
-            onset_dt = max(0.01, curr_onset - prev_onset)
-            curr_dur = curr_offset - curr_onset
+            onset_dt_sec = max(0.01, curr_onset - prev_onset)
+            onset_dt_beats = max(0.125, onset_dt_sec / sec_per_beat)
+
+            curr_dur = note_events[t].duration
             is_overlapping = curr_onset < prev_offset
-            tag = note_events[t][5] if len(note_events[t]) > 5 else None
+            tag = note_events[t].tag
             
             local_anchor = self._get_local_anchor_fret(note_events, t)
 
@@ -104,8 +106,7 @@ class ErgonomicFretboardHMMSolver:
                     else:
                         inertia_penalty = fret_span * 1.2
 
-                    # Penalize large fret leaps in fast passages (erogonomic fix)
-                    if onset_dt < 0.25 and fret_span >= 4:
+                    if onset_dt_beats < 0.5 and fret_span >= 4:
                         inertia_penalty += 120.0
 
                     if p_fret == 0 or c_fret == 0:
@@ -133,24 +134,26 @@ class ErgonomicFretboardHMMSolver:
                         strain = 8.0 if (fret_diff > 0 and finger_diff < 0) or (fret_diff < 0 and finger_diff > 0) else 0.0
                         transition_step_cost = (fret_dist * 0.3) + strain
                     else:
-                        transition_step_cost = (anchor_shift * 3.0) / (onset_dt + 0.08)
+                        transition_step_cost = (anchor_shift * 3.0) / (onset_dt_beats + 0.1)
 
                     string_diff = c_string - p_string
                     if string_diff == 0:
                         string_shift = 0.0
                     elif string_diff > 0:
-                        # Moving to lower pitch string: penalize large jumps up the neck
                         string_shift = math.pow(string_diff, 1.3) * 1.8 + (80.0 if fret_span >= 4 else 0.0)
                     else:
                         string_shift = math.pow(abs(string_diff), 1.4) * 2.5
 
-                    open_cost = (-3.0 if (onset_dt > 0.15 or curr_dur > 0.4) else 2.0) if c_fret == 0 else 0.0
+                    open_cost = (-3.0 if (onset_dt_beats > 0.5 or curr_dur > 0.4) else 2.0) if c_fret == 0 else 0.0
                     tech_cost = 15.0 if (tag == "pop" and c_string > 2) else 8.0 if (tag == "slap" and c_string <= 2) else 0.0
 
                     anchor_dist = abs(c_fret - local_anchor) if c_fret > 0 else 0.0
                     anchor_cost = anchor_dist * 0.15
 
-                    local_cost = transition_step_cost + stretch_penalty + inertia_penalty + string_shift + open_cost + tech_cost + anchor_cost
+                    local_cost = (
+                        transition_step_cost + stretch_penalty + inertia_penalty +
+                        string_shift + open_cost + tech_cost + anchor_cost
+                    )
                     total_score = V[t-1][p_state] + local_cost + (0.1 * math.pow(local_cost, 2))
 
                     if total_score < best_cost:
@@ -183,7 +186,7 @@ class ErgonomicFretboardHMMSolver:
         legatos = [False] * T
         slides = [False] * T
         for i in range(1, T):
-            onset_dt = note_events[i][0] - note_events[i-1][0]
+            onset_dt = note_events[i].start - note_events[i-1].start
             p_string, p_fret = optimal_states_full[i-1][0], optimal_states_full[i-1][1]
             c_string, c_fret = optimal_states_full[i][0], optimal_states_full[i][1]
 
