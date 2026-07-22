@@ -122,6 +122,9 @@ def filter_performance_for_level(
                         bends=root_note.bends,
                         tag="normal",
                         duty_cycle=root_note.duty_cycle,
+                        is_triplet=root_note.is_triplet,
+                        is_accent=root_note.is_accent,
+                        dynamic_mark=root_note.dynamic_mark,
                     )
                 )
         return filtered
@@ -144,6 +147,9 @@ def filter_performance_for_level(
                         bends=note.bends,
                         tag="normal",
                         duty_cycle=note.duty_cycle,
+                        is_triplet=note.is_triplet,
+                        is_accent=note.is_accent,
+                        dynamic_mark=note.dynamic_mark,
                     )
                 )
         elif level == 3:
@@ -192,7 +198,7 @@ class AudioTranscriptionPipeline:
             bass_y, sr, parsed_key=parsed_key_str, bass_filter_fn=apply_bass_bandpass
         )
 
-        # 2. Audio Pitch Detection & Artifact Purging
+        # 2. Audio Pitch Detection & Extended Technique Detection
         sos_low = signal.butter(4, [25 / (sr / 2), 280 / (sr / 2)], 'bandpass', output='sos')
         bass_low = signal.sosfiltfilt(sos_low, bass_y)
 
@@ -206,19 +212,18 @@ class AudioTranscriptionPipeline:
         verified_notes = cross_stem_bleed_filter(corrected_notes, stem_dict, sr=sr)
         purged_notes = purge_audio_artifacts(verified_notes, bass_audio=bass_y, sr=sr)
 
-        # 3. Tempo & Beat Grid Estimation
+        # 3. Tempo Grid Map & Beat Estimation
         beat_times, instant_bpms = estimate_beat_grid(drums_y, sr)
         bpm = float(np.median(instant_bpms)) if len(instant_bpms) > 0 else 120.0
         is_compound = (genre_config and genre_config["features"].get("compound_meter")) or (bpm < 95.0)
 
-        # 4. Beat Grid Sub-division Alignment & Duty Cycle Gating
+        # 4. Grid Alignment, Triplet Evaluation & Dynamics Scoring
         grid_aligned_notes = snap_events_to_beat_grid(purged_notes, beat_times, bpm, is_compound=is_compound)
 
         selected_level = level if (isinstance(level, int) and 0 <= level <= 5) else 5
         target_levels = range(6) if generate_all_levels else [selected_level]
 
         for target_level in target_levels:
-            # Include _LevelX only if generate_all_levels is True
             file_title = f"{clean_filename}_Level{target_level}" if generate_all_levels else clean_filename
             xml_out = os.path.join(self.output_dir, f"{file_title}.musicxml")
             
@@ -234,11 +239,21 @@ class AudioTranscriptionPipeline:
                 note.pitch = snap_pitch_to_scale(note.pitch, detected_key, level=target_level)
                 snapped_layer.append(note)
 
-            # 5. Beat-Aware Ergonomic Fretboard Solver
+            # 5. Fretboard Ergonomics & Expressive Solver (Rakes, Legatos, Slides)
             hmm = ErgonomicFretboardHMMSolver(tuning_type='4_string_standard')
-            fretboard_path, _, _, _ = hmm.solve(snapped_layer, bpm=bpm)
+            fretboard_path, rakes, legatos, slides = hmm.solve(snapped_layer, bpm=bpm)
 
-            # 6. Score Engraving & Export
+            # Update Expressive Markers on NoteEvents
+            for idx_n, note_n in enumerate(snapped_layer):
+                if idx_n < len(legatos):
+                    note_n.is_legato = legatos[idx_n]
+                if idx_n < len(slides):
+                    note_n.is_slide = slides[idx_n]
+                if idx_n < len(rakes):
+                    note_n.is_rake = rakes[idx_n]
+
+            # 6. Score Engraving & Export with Full Tempo & Expression Map
+            expressive_data = {'rakes': rakes, 'legatos': legatos, 'slides': slides}
             build_and_export_score(
                 snapped_layer,
                 fretboard_path,
@@ -249,5 +264,8 @@ class AudioTranscriptionPipeline:
                 is_compound,
                 target_level,
                 xml_out,
+                beat_times=beat_times,
+                instant_bpms=instant_bpms,
+                expressive_data=expressive_data,
             )
             print(f" -> Output saved: {xml_out}")

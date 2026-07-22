@@ -195,7 +195,7 @@ class ErgonomicFretboardHMMSolver:
 
             if c_string == p_string and p_fret > 0 and c_fret > 0 and p_fret != c_fret:
                 fret_diff = abs(c_fret - p_fret)
-                if fret_diff in [1, 2, 3] and onset_dt < 0.05:
+                if fret_diff in [1, 2, 3] and onset_dt < 0.08:
                     legatos[i] = True
                 elif fret_diff >= 3 and onset_dt < 0.18:
                     slides[i] = True

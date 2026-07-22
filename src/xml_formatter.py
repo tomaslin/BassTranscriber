@@ -127,12 +127,11 @@ def consolidate_measure_notation(measure, m_capacity=fractions.Fraction(4, 1), i
             midpoint = m_capacity / 2
             crosses_midpoint = (curr_offset < midpoint) and ((curr_offset + combined_q) > midpoint)
 
-            # Rest merge allowed ONLY if it doesn't cross measure center AND is a standard single duration
             if not crosses_midpoint and combined_q in VALID_SINGLE_DURATIONS:
                 curr.quarterLength = float(combined_q)
                 curr_offset += combined_q
                 consolidated.append(curr)
-                i += 2  # Skip merged rest
+                i += 2
                 continue
 
         consolidated.append(curr)
@@ -159,15 +158,20 @@ def consolidate_measure_notation(measure, m_capacity=fractions.Fraction(4, 1), i
                         elem.tie = None
                     else:
                         elem.tie = next_elem.tie
-                    idx += 1  # Skip merged element
+                    idx += 1
         merged.append(elem)
         idx += 1
 
     measure.elements = tuple(merged)
 
 
-def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type, level=5):
-    """Injects metadata, enforces matching part IDs, and injects explicit key/time attributes in MusicXML."""
+def sanitize_and_inject_tablature(
+    xml_path, artist_name, song_title, tuning_type, level=5, snapped_layer=None, expressive_data=None
+):
+    """
+    Injects metadata, tab tuning, and extended technique marks (slap, pop, palm mute,
+    hammer-ons, pull-offs, slides, bends, and ghost noteheads) into MusicXML.
+    """
     try:
         with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
@@ -193,7 +197,7 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
         elem.text = text_val
         return elem
 
-    # Metadata: Title
+    # Metadata
     set_or_create(root, "movement-title", song_title)
 
     work_elem = root.find(f"{ns}work")
@@ -202,7 +206,6 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
         root.insert(0, work_elem)
     set_or_create(work_elem, "work-title", song_title)
 
-    # Metadata: Creator
     ident = root.find(f"{ns}identification")
     if ident is None:
         ident = ET.SubElement(root, f"{ns}identification")
@@ -218,7 +221,6 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
         creator = ET.SubElement(ident, f"{ns}creator", attrib={"type": "composer"})
         creator.text = artist_name
 
-    # Read <score-part id="..."> and enforce matching ID on <part>
     score_part_elem = root.find(f".//{ns}score-part")
     score_part_id = score_part_elem.attrib.get("id", "P1") if score_part_elem is not None else "P1"
 
@@ -232,14 +234,12 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
                 attrs = ET.Element(f"{ns}attributes")
                 first_measure.insert(0, attrs)
 
-            # Explicit <key> definition in Measure 1 attributes
             key_elem = attrs.find(f"{ns}key")
             if key_elem is None:
                 key_elem = ET.SubElement(attrs, f"{ns}key")
                 ET.SubElement(key_elem, f"{ns}fifths").text = "0"
                 ET.SubElement(key_elem, f"{ns}mode").text = "major"
 
-            # Explicit <time> definition in Measure 1 attributes
             time_elem = attrs.find(f"{ns}time")
             if time_elem is None:
                 time_elem = ET.SubElement(attrs, f"{ns}time")
@@ -266,34 +266,55 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
                 ET.SubElement(s_tuning, f"{ns}tuning-step").text = step
                 ET.SubElement(s_tuning, f"{ns}tuning-octave").text = str(oct_val)
 
-    prev_tech, prev_string, prev_fret = None, None, None
-
+    # Injections: Slap/Pop, Palm Mute, Legato, Slides & Bends
+    note_idx = 0
     for part in root.findall(f"{ns}part"):
         part.attrib["id"] = score_part_id
         for measure in part.findall(f"{ns}measure"):
             for note_elem in list(measure.findall(f"{ns}note")):
                 if note_elem.find(f"{ns}rest") is not None:
-                    prev_tech, prev_string, prev_fret = None, None, None
                     continue
 
-                string_num, fret_num = None, None
-                notations = note_elem.find(f"{ns}notations")
-                if notations is not None:
+                if snapped_layer and note_idx < len(snapped_layer):
+                    evt = snapped_layer[note_idx]
+
+                    notations = note_elem.find(f"{ns}notations")
+                    if notations is None:
+                        notations = ET.SubElement(note_elem, f"{ns}notations")
+
                     technical = notations.find(f"{ns}technical")
-                    if technical is not None:
-                        s_elem, f_elem = technical.find(f"{ns}string"), technical.find(f"{ns}fret")
-                        if s_elem is not None and f_elem is not None:
-                            string_num, fret_num = s_elem.text, f_elem.text
+                    if technical is None:
+                        technical = ET.SubElement(notations, f"{ns}technical")
 
-                if string_num and fret_num and level >= 3 and prev_tech and prev_string == string_num and prev_fret:
-                    p_fret, c_fret = int(prev_fret), int(fret_num)
-                    if p_fret > 0 and c_fret > 0 and abs(c_fret - p_fret) <= 3 and c_fret != p_fret:
-                        h_type = "hammer-on" if c_fret > p_fret else "pull-off"
-                        label = "H" if c_fret > p_fret else "P"
-                        ET.SubElement(prev_tech, f"{ns}{h_type}", attrib={"type": "start", "number": "1"}).text = label
-                        ET.SubElement(technical, f"{ns}{h_type}", attrib={"type": "stop", "number": "1"}).text = label
+                    # Extended Techniques
+                    if evt.tag == "slap":
+                        ET.SubElement(technical, f"{ns}slap")
+                    elif evt.tag == "pop":
+                        ET.SubElement(technical, f"{ns}pop")
+                    elif evt.tag == "palm_mute":
+                        ET.SubElement(technical, f"{ns}other-technical").text = "P.M."
 
-                prev_tech, prev_string, prev_fret = technical if string_num else None, string_num, fret_num
+                    # Ghost Notes
+                    if evt.tag == "ghost":
+                        nh = note_elem.find(f"{ns}notehead")
+                        if nh is None:
+                            nh = ET.SubElement(note_elem, f"{ns}notehead")
+                        nh.text = "x"
+
+                    # Expressive Pitch Articulations
+                    if evt.is_legato:
+                        ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "start", "number": "1"}).text = "H"
+                        slur = ET.SubElement(notations, f"{ns}slur", attrib={"type": "start", "number": "1"})
+                    if evt.is_slide:
+                        ET.SubElement(notations, f"{ns}slide", attrib={"type": "start", "number": "1"}).text = "slide"
+
+                    # Pitch Bends
+                    if evt.bends and any(abs(b) > 0.2 for b in evt.bends):
+                        bend_elem = ET.SubElement(technical, f"{ns}bend")
+                        bend_alter = ET.SubElement(bend_elem, f"{ns}bend-alter")
+                        bend_alter.text = str(round(max(evt.bends), 1))
+
+                    note_idx += 1
 
     if ns:
         ET.register_namespace('', ns.strip('{}'))
