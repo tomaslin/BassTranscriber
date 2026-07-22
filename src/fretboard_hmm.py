@@ -20,7 +20,7 @@ class ErgonomicFretboardHMMSolver:
         min_p = min(self.strings.values())
         max_p = max(self.strings.values()) + self.num_frets
         midi_pitch = fold_pitch_to_bass_range(midi_pitch, min_pitch=min_p, max_pitch=max_p)
-        
+
         positions = []
         for s, open_p in self.strings.items():
             fret = midi_pitch - open_p
@@ -37,11 +37,11 @@ class ErgonomicFretboardHMMSolver:
         start = max(0, t - window)
         end = min(len(note_events), t + window + 1)
         local_pitches = [n.pitch for n in note_events[start:end]]
-        
+
         median_pitch = sorted(local_pitches)[len(local_pitches) // 2]
         open_pitches = sorted(self.strings.values())
         median_open = open_pitches[len(open_pitches) // 2]
-        
+
         return float(max(1, min(self.num_frets, median_pitch - median_open)))
 
     def solve(self, raw_note_events: list[NoteEvent], bpm=120.0):
@@ -67,11 +67,16 @@ class ErgonomicFretboardHMMSolver:
             string_num, fret, finger = state
             tag = note_events[0].tag
             note_dur = note_events[0].duration
-            
+
             open_cost = (-2.0 if note_dur > 0.3 else 1.5) if fret == 0 else 0.0
             box_cost = (fret * 0.08 if fret <= 7 else fret * 0.20) + open_cost
-            tech_cost = 15.0 if (tag == "pop" and string_num > 2) else 8.0 if (tag == "slap" and string_num <= 2) else 0.0
-            
+
+            tech_cost = 0.0
+            if tag == "pop":
+                tech_cost = 0.0 if string_num in [1, 2] else 25.0
+            elif tag == "slap":
+                tech_cost = 0.0 if string_num >= 3 else 18.0
+
             anchor_dist = abs(fret - initial_anchor) if fret > 0 else 0.0
             anchor_cost = anchor_dist * 0.15
 
@@ -84,14 +89,14 @@ class ErgonomicFretboardHMMSolver:
         for t in range(1, T):
             prev_onset, prev_offset = note_events[t-1].start, note_events[t-1].end
             curr_onset, curr_offset = note_events[t].start, note_events[t].end
-            
+
             onset_dt_sec = max(0.01, curr_onset - prev_onset)
             onset_dt_beats = max(0.125, onset_dt_sec / sec_per_beat)
 
             curr_dur = note_events[t].duration
-            is_overlapping = curr_onset < prev_offset
+            overlap_dur = max(0.0, prev_offset - curr_onset)
             tag = note_events[t].tag
-            
+
             local_anchor = self._get_local_anchor_fret(note_events, t)
 
             for c_state in sequence_states[t]:
@@ -100,9 +105,11 @@ class ErgonomicFretboardHMMSolver:
 
                 for p_state in V[t-1]:
                     p_string, p_fret, p_finger = p_state
-                    
-                    if is_overlapping and c_string == p_string:
-                        continue
+
+                    if overlap_dur > 0.08 and c_string == p_string and c_fret != p_fret:
+                        overlap_penalty = 150.0
+                    else:
+                        overlap_penalty = overlap_dur * 20.0
 
                     fret_span = abs(c_fret - p_fret) if (p_fret > 0 and c_fret > 0) else 0
                     if fret_span > 4:
@@ -120,7 +127,7 @@ class ErgonomicFretboardHMMSolver:
                         d_prev = 1.0 - math.pow(2, -p_fret / 12.0)
                         d_curr = 1.0 - math.pow(2, -c_fret / 12.0)
                         fret_dist = abs(d_curr - d_prev) * 25.0
-                        
+
                         if min(p_fret, c_fret) <= 5 and fret_span > 3:
                             stretch_penalty = 35.0
                         elif fret_span > 4:
@@ -149,14 +156,19 @@ class ErgonomicFretboardHMMSolver:
                         string_shift = math.pow(abs(string_diff), 1.4) * 2.5
 
                     open_cost = (-3.0 if (onset_dt_beats > 0.5 or curr_dur > 0.4) else 2.0) if c_fret == 0 else 0.0
-                    tech_cost = 15.0 if (tag == "pop" and c_string > 2) else 8.0 if (tag == "slap" and c_string <= 2) else 0.0
+
+                    tech_cost = 0.0
+                    if tag == "pop":
+                        tech_cost = 0.0 if c_string in [1, 2] else 25.0
+                    elif tag == "slap":
+                        tech_cost = 0.0 if c_string >= 3 else 18.0
 
                     anchor_dist = abs(c_fret - local_anchor) if c_fret > 0 else 0.0
                     anchor_cost = anchor_dist * 0.15
 
                     local_cost = (
                         transition_step_cost + stretch_penalty + inertia_penalty +
-                        string_shift + open_cost + tech_cost + anchor_cost
+                        string_shift + open_cost + tech_cost + anchor_cost + overlap_penalty
                     )
                     total_score = V[t-1][p_state] + local_cost + (0.1 * math.pow(local_cost, 2))
 
@@ -184,7 +196,7 @@ class ErgonomicFretboardHMMSolver:
             curr_state = optimal_states_full[t]
             optimal_states_full[t-1] = backpointer[t].get(curr_state, sequence_states[t-1][0])
 
-        optimal_states = [(s[0], s[1]) for s in optimal_states_full]
+        optimal_positions = optimal_states_full
 
         rakes = [False] * T
         legatos = [False] * T
@@ -204,4 +216,4 @@ class ErgonomicFretboardHMMSolver:
                 elif fret_diff >= 3 and onset_dt < 0.18:
                     slides[i] = True
 
-        return optimal_states, rakes, legatos, slides
+        return optimal_positions, rakes, legatos, slides

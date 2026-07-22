@@ -97,26 +97,34 @@ def filter_performance_for_level(
 
     filtered = []
     beat_interval = 60.0 / bpm if bpm > 0 else 0.5
-    measure_len = beat_interval * (6 if is_compound else 4)
+    beats_per_measure = 6 if is_compound else 4
 
     if len(beats) == 0: return list(layer)
 
-    downbeats = np.arange(beats[0], layer[-1].end + measure_len, measure_len) if layer[-1].end >= beats[0] else np.array([])
-    half_measure_beats = np.arange(beats[0] + (measure_len / 2), layer[-1].end + measure_len, measure_len) if layer[-1].end >= beats[0] else np.array([])
-    eighth_beats = [b + beat_interval / 2 for b in beats]
+    # Index downbeats directly from actual beat_times array anchors to prevent drift
+    downbeat_indices = range(0, len(beats), beats_per_measure)
+    downbeats = np.array([beats[bi] for bi in downbeat_indices])
+
+    half_indices = [min(bi + beats_per_measure // 2, len(beats) - 1) for bi in downbeat_indices]
+    half_measure_beats = np.array([beats[hi] for hi in half_indices])
+
+    eighth_beats = []
+    for i in range(len(beats) - 1):
+        eighth_beats.append(beats[i])
+        eighth_beats.append((beats[i] + beats[i+1]) / 2.0)
 
     ghost_enabled = genre_config["features"].get("ghost_notes", True) if genre_config else True
 
     if level <= 1:
-        target_beats = np.sort(np.concatenate((downbeats, half_measure_beats)))
+        target_beats = np.sort(np.unique(np.concatenate((downbeats, half_measure_beats))))
         for tb in target_beats:
-            window_notes = [n for n in layer if tb - 0.20 <= n.start < tb + (beat_interval * 2)]
+            window_notes = [n for n in layer if tb - 0.20 <= n.start < tb + (beat_interval * 1.5)]
             if window_notes:
                 root_note = min(window_notes, key=lambda x: x.pitch)
                 filtered.append(
                     NoteEvent(
                         start=root_note.start,
-                        end=root_note.start + (measure_len * 0.5),
+                        end=root_note.start + (beat_interval * 2.0),
                         pitch=root_note.pitch,
                         pitches=root_note.pitches,
                         amplitude=root_note.amplitude,
@@ -203,18 +211,19 @@ class AudioTranscriptionPipeline:
             bass_y, sr, parsed_key=parsed_key_str, bass_filter_fn=apply_bass_bandpass
         )
 
-        sos_low = signal.butter(4, [25 / (sr / 2), 280 / (sr / 2)], 'bandpass', output='sos')
+        sos_low = signal.butter(4, [25 / (sr / 2), 350 / (sr / 2)], 'bandpass', output='sos')
         bass_low = signal.sosfiltfilt(sos_low, bass_y)
 
         raw_pyin_notes = pyin_predict_notes(bass_low, sr, conf_threshold=0.30, tuning_offset=tuning_offset)
 
         tuning_type = genre_config.get("tuning", "4_string_standard") if genre_config else "4_string_standard"
         min_p = 23 if "5_string" in tuning_type or "6_string" in tuning_type else 28
-        max_p = 72 if "6_string" in tuning_type else 67
+        max_p = 84 if "6_string" in tuning_type else 72
 
         corrected_notes = []
         for n in raw_pyin_notes:
-            n.pitch = max(min_p, min(max_p, int(round(n.pitch))))
+            p_clamped = max(min_p, min(max_p, int(round(n.pitch))))
+            n.update_pitch(p_clamped)
             corrected_notes.append(n)
 
         verified_notes = cross_stem_bleed_filter(corrected_notes, stem_dict, sr=sr)
@@ -241,10 +250,11 @@ class AudioTranscriptionPipeline:
                 continue
 
             snapped_layer = []
-            for idx_l, note in enumerate(level_layer):
+            for idx_l, note_item in enumerate(level_layer):
                 next_p = level_layer[idx_l + 1].pitch if idx_l + 1 < len(level_layer) else None
-                note.pitch = snap_pitch_to_scale(note.pitch, detected_key, level=target_level, next_midi=next_p)
-                snapped_layer.append(note)
+                snapped_p = snap_pitch_to_scale(note_item.pitch, detected_key, level=target_level, next_midi=next_p)
+                note_item.update_pitch(snapped_p)
+                snapped_layer.append(note_item)
 
             hmm = ErgonomicFretboardHMMSolver(tuning_type=tuning_type)
             fretboard_path, rakes, legatos, slides = hmm.solve(snapped_layer, bpm=bpm)

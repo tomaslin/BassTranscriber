@@ -29,7 +29,7 @@ def build_and_export_score(
 ):
     """
     Builds music21 score stream, eliminates temporal drift, handles anacrusis,
-    and exports formatted MusicXML.
+    attaches fingerings/harmonics, and exports formatted MusicXML.
     """
     sec_per_quarter = (60.0 / bpm) if bpm > 0 else 0.5
 
@@ -96,7 +96,7 @@ def build_and_export_score(
                 bpm = curr_bpm
                 curr_measure.append(tempo.MetronomeMark(number=bpm))
 
-        fret_pos = fretboard_path[i] if i < len(fretboard_path) else (4, 0)
+        fret_pos = fretboard_path[i] if i < len(fretboard_path) else (4, 0, 0)
 
         pitches = note_evt.pitches if note_evt.pitches else [note_evt.pitch]
         m21_pitches = [get_directional_enharmonic_pitch(p, detected_key, prev_midi) for p in pitches]
@@ -112,20 +112,32 @@ def build_and_export_score(
         for k, chunk_dur in enumerate(note_chunks):
             if len(m21_pitches) == 1:
                 elem_sub = note.Note(m21_pitches[0])
+                s_idx, f_val, fing_val = 4, 0, 0
                 if isinstance(fret_pos, tuple):
-                    s_idx, f_val = fret_pos[0], fret_pos[1]
-                elif isinstance(fret_pos, list) and fret_pos:
-                    s_idx, f_val = fret_pos[0][0], fret_pos[0][1]
-                else:
-                    s_idx, f_val = 4, 0
-                elem_sub.articulations.extend([articulations.StringIndication(s_idx), articulations.FretIndication(f_val)])
+                    s_idx = fret_pos[0]
+                    f_val = fret_pos[1]
+                    fing_val = fret_pos[2] if len(fret_pos) > 2 else 0
+
+                elem_sub.articulations.extend([
+                    articulations.StringIndication(s_idx),
+                    articulations.FretIndication(f_val)
+                ])
+                if fing_val > 0:
+                    elem_sub.articulations.append(articulations.Fingering(fing_val))
             else:
                 elem_sub = chord.Chord(m21_pitches)
-                if isinstance(fret_pos, list):
-                    for chord_note_idx, n_comp in enumerate(elem_sub.notes):
-                        if chord_note_idx < len(fret_pos):
-                            s_idx, f_val = fret_pos[chord_note_idx][0], fret_pos[chord_note_idx][1]
-                            n_comp.articulations.extend([articulations.StringIndication(s_idx), articulations.FretIndication(f_val)])
+                if isinstance(fret_pos, tuple):
+                    s_idx, f_val, fing_val = fret_pos[0], fret_pos[1], (fret_pos[2] if len(fret_pos) > 2 else 0)
+                    for chord_note in elem_sub.notes:
+                        chord_note.articulations.extend([
+                            articulations.StringIndication(s_idx),
+                            articulations.FretIndication(f_val)
+                        ])
+                        if fing_val > 0:
+                            chord_note.articulations.append(articulations.Fingering(fing_val))
+
+            if note_evt.is_harmonic:
+                elem_sub.articulations.append(articulations.Harmonic())
 
             if note_evt.is_triplet and k == 0:
                 elem_sub.duration = duration.Duration(float(chunk_dur))

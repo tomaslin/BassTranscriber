@@ -13,13 +13,13 @@ class NoteEvent:
     amplitude: float = 1.0  # Normalized RMS audio energy
     bends: Optional[List[float]] = None  # Semitone pitch bends over time
     microtone_cents: float = 0.0  # Fretless microtonal pitch offset in cents
-    tag: str = "normal"  # "normal", "staccato", "ghost", "slap", "pop", "palm_mute", "let_ring"
+    tag: str = "normal"  # "normal", "staccato", "ghost", "slap", "pop", "palm_mute", "let_ring", "harmonic"
     duty_cycle: float = 1.0
     string_idx: Optional[int] = None
     fret_val: Optional[int] = None
     finger_val: Optional[int] = None
     positions: List[Tuple[int, int, int]] = field(default_factory=list)  # [(string, fret, finger), ...]
-    
+
     # Expressive & Rhythmic Markers
     is_triplet: bool = False
     is_accent: bool = False
@@ -28,6 +28,7 @@ class NoteEvent:
     is_slide: bool = False
     is_rake: bool = False
     is_pickup: bool = False
+    is_harmonic: bool = False
     spanner_tag: Optional[str] = None  # "let_ring", "palm_mute"
     spanner_type: Optional[str] = None  # "start", "stop", "continue"
 
@@ -36,6 +37,11 @@ class NoteEvent:
             self.pitches = [self.pitch]
         elif self.pitches and self.pitch is None:
             self.pitch = self.pitches[0]
+
+    def update_pitch(self, new_pitch: int):
+        """Synchronizes single pitch update with pitches list to prevent mutation bugs."""
+        self.pitch = new_pitch
+        self.pitches = [new_pitch]
 
     @property
     def duration(self) -> float:

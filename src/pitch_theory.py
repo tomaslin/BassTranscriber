@@ -3,12 +3,12 @@ import numpy as np
 import librosa
 from music21 import key, pitch
 
-MIN_BASS_MIDI = 28  # E1
-MAX_BASS_MIDI = 67  # G4
+MIN_BASS_MIDI = 23  # B0 (5/6-string)
+MAX_BASS_MIDI = 84  # C6 (Solos / high harmonics / double stops)
 
 
-def fold_pitch_to_bass_range(midi_pitch: int, min_pitch: int = 23, max_pitch: int = 72) -> int:
-    """Folds pitch into bass range using bounded arithmetic to prevent infinite loops."""
+def fold_pitch_to_bass_range(midi_pitch: int, min_pitch: int = 23, max_pitch: int = 84) -> int:
+    """Folds pitch into valid bass register while allowing extended solo / upper fretboard ranges."""
     if min_pitch >= max_pitch:
         return min_pitch
     while midi_pitch < min_pitch:
@@ -43,7 +43,7 @@ def normalize_key_str(raw_key: str):
 def detect_key_signature(audio_y, sr, parsed_key=None, bass_filter_fn=None):
     """
     Detects musical key signature and mode using chroma profiles across Major,
-    Minor, Mixolydian, Dorian, and Blues profiles.
+    Minor, Mixolydian, Dorian, and Blues profiles. Correctly instantiates modal key objects.
     """
     if parsed_key:
         normalized = normalize_key_str(parsed_key)
@@ -78,7 +78,9 @@ def detect_key_signature(audio_y, sr, parsed_key=None, bass_filter_fn=None):
         (blues_profile, "minor"),
     ]
 
-    best_score, best_key_str = -float('inf'), 'C'
+    best_score = -float('inf')
+    best_root = 'C'
+    best_mode = 'major'
 
     for i in range(12):
         rot_chroma = np.roll(chroma_sum, -i)
@@ -86,20 +88,22 @@ def detect_key_signature(audio_y, sr, parsed_key=None, bass_filter_fn=None):
             corr = np.nan_to_num(np.corrcoef(rot_chroma, prof)[0, 1])
             if corr > best_score:
                 best_score = corr
-                root_note = pitch_names[i]
-                best_key_str = root_note if mode_type == "major" else root_note.lower()
+                best_root = pitch_names[i]
+                best_mode = mode_type
 
     try:
-        return key.Key(best_key_str), False
+        # Proper music21 modal initialization
+        if best_mode in ["major", "minor"]:
+            k_str = best_root if best_mode == "major" else best_root.lower()
+            return key.Key(k_str), False
+        else:
+            return key.Key(best_root, best_mode), False
     except Exception:
         return key.Key('C'), False
 
 
 def snap_pitch_to_scale(midi_val: int, key_obj, level: int = 5, next_midi: int = None) -> int:
-    """
-    Folds pitch into bass range while preserving chromatic voice leading,
-    secondary dominants, and chromatic passing tones.
-    """
+    """Folds pitch into bass range and snaps to detected scale if requested by level."""
     midi_val = fold_pitch_to_bass_range(midi_val)
 
     if key_obj is None or level >= 2:
@@ -123,10 +127,7 @@ def snap_pitch_to_scale(midi_val: int, key_obj, level: int = 5, next_midi: int =
 
 
 def get_directional_enharmonic_pitch(midi_val: int, key_obj=None, prev_midi: int = None) -> pitch.Pitch:
-    """
-    Returns a key-aware and line-direction-aware music21 Pitch object.
-    Sharps are preferred when moving upward, flats when moving downward.
-    """
+    """Returns a key-aware and line-direction-aware music21 Pitch object."""
     p = pitch.Pitch(midi=midi_val)
 
     if key_obj is not None:
@@ -151,5 +152,4 @@ def get_directional_enharmonic_pitch(midi_val: int, key_obj=None, prev_midi: int
 
 
 def get_key_aware_pitch(midi_val: int, key_obj=None, prev_midi: int = None) -> pitch.Pitch:
-    """Wrapper function for directional key-aware pitch conversion."""
     return get_directional_enharmonic_pitch(midi_val, key_obj, prev_midi)

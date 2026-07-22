@@ -175,8 +175,8 @@ def sanitize_and_inject_tablature(
     xml_path, artist_name, song_title, tuning_type, level=5, snapped_layer=None, expressive_data=None
 ):
     """
-    Sanitizes MusicXML structure and formats dual-staff layout (Standard + TAB).
-    Duplicates note elements onto Staff 2 for TAB display in MuseScore/Guitar Pro.
+    Sanitizes MusicXML structure and formats valid dual-staff layout (Standard Notation on Staff 1 + TAB on Staff 2)
+    using proper MusicXML <backup> temporal positioning.
     """
     try:
         with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -230,149 +230,163 @@ def sanitize_and_inject_tablature(
     score_part_id = score_part_elem.attrib.get("id", "P1") if score_part_elem is not None else "P1"
 
     first_part = root.find(f"{ns}part")
-    if first_part is not None:
-        first_part.attrib["id"] = score_part_id
+    if first_part is None:
+        return
 
-        measures = list(first_part.findall(f"{ns}measure"))
-        for m_idx, measure in enumerate(measures, 1):
-            if m_idx > 1 and (m_idx - 1) % 4 == 0:
-                for existing_p in measure.findall(f"{ns}print"):
-                    measure.remove(existing_p)
+    first_part.attrib["id"] = score_part_id
+    measures = list(first_part.findall(f"{ns}measure"))
 
-                print_elem = ET.Element(f"{ns}print")
-                if (m_idx - 1) % 16 == 0:
-                    print_elem.attrib["new-page"] = "yes"
-                else:
-                    print_elem.attrib["new-system"] = "yes"
-                measure.insert(0, print_elem)
+    for m_idx, measure in enumerate(measures, 1):
+        if m_idx > 1 and (m_idx - 1) % 4 == 0:
+            for existing_p in measure.findall(f"{ns}print"):
+                measure.remove(existing_p)
 
-            if m_idx == 1:
-                attrs = measure.find(f"{ns}attributes")
-                if attrs is None:
-                    attrs = ET.Element(f"{ns}attributes")
-                    measure.insert(0, attrs)
+            print_elem = ET.Element(f"{ns}print")
+            if (m_idx - 1) % 16 == 0:
+                print_elem.attrib["new-page"] = "yes"
+            else:
+                print_elem.attrib["new-system"] = "yes"
+            measure.insert(0, print_elem)
 
-                set_or_create(attrs, "staves", "2")
+        if m_idx == 1:
+            attrs = measure.find(f"{ns}attributes")
+            if attrs is None:
+                attrs = ET.Element(f"{ns}attributes")
+                measure.insert(0, attrs)
 
-                for existing_clef in list(attrs.findall(f"{ns}clef")):
-                    attrs.remove(existing_clef)
-                for existing_sd in list(attrs.findall(f"{ns}staff-details")):
-                    attrs.remove(existing_sd)
+            set_or_create(attrs, "staves", "2")
 
-                clef1 = ET.SubElement(attrs, f"{ns}clef", attrib={"number": "1"})
-                ET.SubElement(clef1, f"{ns}sign").text = "F"
-                ET.SubElement(clef1, f"{ns}line").text = "4"
+            for existing_clef in list(attrs.findall(f"{ns}clef")):
+                attrs.remove(existing_clef)
+            for existing_sd in list(attrs.findall(f"{ns}staff-details")):
+                attrs.remove(existing_sd)
 
-                clef2 = ET.SubElement(attrs, f"{ns}clef", attrib={"number": "2"})
-                ET.SubElement(clef2, f"{ns}sign").text = "TAB"
-                ET.SubElement(clef2, f"{ns}line").text = "5"
+            clef1 = ET.SubElement(attrs, f"{ns}clef", attrib={"number": "1"})
+            ET.SubElement(clef1, f"{ns}sign").text = "F"
+            ET.SubElement(clef1, f"{ns}line").text = "4"
 
-                staff_details = ET.SubElement(attrs, f"{ns}staff-details", attrib={"number": "2"})
-                ET.SubElement(staff_details, f"{ns}staff-lines").text = "4"
+            clef2 = ET.SubElement(attrs, f"{ns}clef", attrib={"number": "2"})
+            ET.SubElement(clef2, f"{ns}sign").text = "TAB"
+            ET.SubElement(clef2, f"{ns}line").text = "5"
 
-                tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1)]
-                if tuning_type == '5_string_standard':
-                    tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1), ('B', 0)]
-                    staff_details.find(f"{ns}staff-lines").text = "5"
-                elif tuning_type == '6_string_standard':
-                    tunings = [('C', 3), ('G', 2), ('D', 2), ('A', 1), ('E', 1), ('B', 0)]
-                    staff_details.find(f"{ns}staff-lines").text = "6"
+            staff_details = ET.SubElement(attrs, f"{ns}staff-details", attrib={"number": "2"})
+            ET.SubElement(staff_details, f"{ns}staff-lines").text = "4"
 
-                for idx_t, (step, oct_val) in enumerate(tunings, 1):
-                    s_tuning = ET.SubElement(staff_details, f"{ns}staff-tuning", attrib={"line": str(idx_t)})
-                    ET.SubElement(s_tuning, f"{ns}tuning-step").text = step
-                    ET.SubElement(s_tuning, f"{ns}tuning-octave").text = str(oct_val)
+            tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1)]
+            if tuning_type == '5_string_standard':
+                tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1), ('B', 0)]
+                staff_details.find(f"{ns}staff-lines").text = "5"
+            elif tuning_type == '6_string_standard':
+                tunings = [('C', 3), ('G', 2), ('D', 2), ('A', 1), ('E', 1), ('B', 0)]
+                staff_details.find(f"{ns}staff-lines").text = "6"
 
-    note_idx = 0
+            for idx_t, (step, oct_val) in enumerate(tunings, 1):
+                s_tuning = ET.SubElement(staff_details, f"{ns}staff-tuning", attrib={"line": str(idx_t)})
+                ET.SubElement(s_tuning, f"{ns}tuning-step").text = step
+                ET.SubElement(s_tuning, f"{ns}tuning-octave").text = str(oct_val)
+
+    note_global_idx = 0
     active_spanner_tag = None
 
     for part in root.findall(f"{ns}part"):
         part.attrib["id"] = score_part_id
         for measure in part.findall(f"{ns}measure"):
-            measure_children = list(measure)
-            for note_elem in measure_children:
-                if note_elem.tag != f"{ns}note":
-                    continue
+            m_children = list(measure)
 
-                if note_elem.find(f"{ns}rest") is not None:
-                    continue
+            measure_duration = 0
+            tab_elements = []
 
-                set_or_create(note_elem, "staff", "1")
+            for elem in m_children:
+                if elem.tag == f"{ns}note":
+                    set_or_create(elem, "staff", "1")
 
-                pitch_elem = note_elem.find(f"{ns}pitch")
-                if pitch_elem is not None:
-                    step_val = pitch_elem.findtext(f"{ns}step") or "D"
-                    oct_val = int(pitch_elem.findtext(f"{ns}octave") or "3")
+                    pitch_elem = elem.find(f"{ns}pitch")
+                    if pitch_elem is not None:
+                        step_val = pitch_elem.findtext(f"{ns}step") or "D"
+                        oct_val = int(pitch_elem.findtext(f"{ns}octave") or "3")
+                        if oct_val < 3 or (oct_val == 3 and step_val in ["C", "D"]):
+                            set_or_create(elem, "stem", "up")
+                        else:
+                            set_or_create(elem, "stem", "down")
 
-                    if oct_val < 3 or (oct_val == 3 and step_val in ["C", "D"]):
-                        set_or_create(note_elem, "stem", "up")
-                    else:
-                        set_or_create(note_elem, "stem", "down")
+                    is_chord = elem.find(f"{ns}chord") is not None
+                    dur_text = elem.findtext(f"{ns}duration")
+                    if not is_chord and dur_text:
+                        measure_duration += int(dur_text)
 
-                if snapped_layer and note_idx < len(snapped_layer):
-                    evt = snapped_layer[note_idx]
+                    if elem.find(f"{ns}rest") is None and snapped_layer and note_global_idx < len(snapped_layer):
+                        evt = snapped_layer[note_global_idx]
+                        notations = elem.find(f"{ns}notations")
+                        if notations is None:
+                            notations = ET.SubElement(elem, f"{ns}notations")
 
-                    notations = note_elem.find(f"{ns}notations")
-                    if notations is None:
-                        notations = ET.SubElement(note_elem, f"{ns}notations")
+                        technical = notations.find(f"{ns}technical")
+                        if technical is None:
+                            technical = ET.SubElement(notations, f"{ns}technical")
 
-                    technical = notations.find(f"{ns}technical")
-                    if technical is None:
-                        technical = ET.SubElement(notations, f"{ns}technical")
+                        if evt.tag == "slap" and technical.find(f"{ns}slap") is None:
+                            ET.SubElement(technical, f"{ns}slap")
+                        elif evt.tag == "pop" and technical.find(f"{ns}pop") is None:
+                            ET.SubElement(technical, f"{ns}pop")
 
-                    if evt.tag == "slap" and technical.find(f"{ns}slap") is None:
-                        ET.SubElement(technical, f"{ns}slap")
-                    elif evt.tag == "pop" and technical.find(f"{ns}pop") is None:
-                        ET.SubElement(technical, f"{ns}pop")
+                        if evt.tag in ["palm_mute", "let_ring"]:
+                            if active_spanner_tag != evt.tag:
+                                active_spanner_tag = evt.tag
+                                ET.SubElement(notations, f"{ns}dashes", attrib={"type": "start", "number": "1"})
 
-                    if evt.tag in ["palm_mute", "let_ring"]:
-                        if active_spanner_tag != evt.tag:
-                            active_spanner_tag = evt.tag
-                            ET.SubElement(notations, f"{ns}dashes", attrib={"type": "start", "number": "1"})
+                                words_dir = ET.Element(f"{ns}direction")
+                                dt = ET.SubElement(words_dir, f"{ns}direction-type")
+                                ET.SubElement(dt, f"{ns}words").text = "P.M." if evt.tag == "palm_mute" else "let ring"
 
-                            words_dir = ET.Element(f"{ns}direction")
-                            dt = ET.SubElement(words_dir, f"{ns}direction-type")
-                            ET.SubElement(dt, f"{ns}words").text = "P.M." if evt.tag == "palm_mute" else "let ring"
+                                insert_pos = 0
+                                for idx_e, child in enumerate(list(measure)):
+                                    if child.tag.endswith(("print", "attributes")):
+                                        insert_pos = idx_e + 1
+                                measure.insert(insert_pos, words_dir)
+                        else:
+                            if active_spanner_tag is not None:
+                                active_spanner_tag = None
+                                ET.SubElement(notations, f"{ns}dashes", attrib={"type": "stop", "number": "1"})
 
-                            insert_pos = 0
-                            for idx_e, child in enumerate(list(measure)):
-                                if child.tag.endswith(("print", "attributes")):
-                                    insert_pos = idx_e + 1
-                            measure.insert(insert_pos, words_dir)
-                    else:
-                        if active_spanner_tag is not None:
-                            active_spanner_tag = None
-                            ET.SubElement(notations, f"{ns}dashes", attrib={"type": "stop", "number": "1"})
+                        if evt.tag == "ghost":
+                            set_or_create(elem, "notehead", "x")
 
-                    if evt.tag == "ghost":
-                        set_or_create(note_elem, "notehead", "x")
+                        if evt.is_legato:
+                            if technical.find(f"{ns}hammer-on") is None:
+                                ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "start", "number": "1"}).text = "H"
+                            if notations.find(f"{ns}slur") is None:
+                                ET.SubElement(notations, f"{ns}slur", attrib={"type": "start", "number": "1"})
 
-                    if evt.is_legato:
-                        if technical.find(f"{ns}hammer-on") is None:
-                            ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "start", "number": "1"}).text = "H"
-                        if notations.find(f"{ns}slur") is None:
-                            ET.SubElement(notations, f"{ns}slur", attrib={"type": "start", "number": "1"})
+                        if evt.is_slide and notations.find(f"{ns}slide") is None:
+                            ET.SubElement(notations, f"{ns}slide", attrib={"type": "start", "number": "1"}).text = "slide"
 
-                    if evt.is_slide and notations.find(f"{ns}slide") is None:
-                        ET.SubElement(notations, f"{ns}slide", attrib={"type": "start", "number": "1"}).text = "slide"
+                        if evt.bends and any(abs(b) > 0.1 for b in evt.bends):
+                            bend_elem = ET.SubElement(technical, f"{ns}bend")
+                            bend_alter = ET.SubElement(bend_elem, f"{ns}bend-alter")
+                            bend_alter.text = str(round(max(evt.bends), 1))
+                        elif abs(evt.microtone_cents) > 10.0:
+                            bend_elem = ET.SubElement(technical, f"{ns}bend")
+                            bend_alter = ET.SubElement(bend_elem, f"{ns}bend-alter")
+                            bend_alter.text = str(round(evt.microtone_cents / 100.0, 2))
 
-                    if evt.bends and any(abs(b) > 0.1 for b in evt.bends):
-                        bend_elem = ET.SubElement(technical, f"{ns}bend")
-                        bend_alter = ET.SubElement(bend_elem, f"{ns}bend-alter")
-                        bend_alter.text = str(round(max(evt.bends), 1))
-                    elif abs(evt.microtone_cents) > 10.0:
-                        bend_elem = ET.SubElement(technical, f"{ns}bend")
-                        bend_alter = ET.SubElement(bend_alter, f"{ns}bend-alter")
-                        bend_alter.text = str(round(evt.microtone_cents / 100.0, 2))
+                        tab_note = ET.fromstring(ET.tostring(elem))
+                        tab_note.find(f"{ns}staff").text = "2"
+                        tab_elements.append(tab_note)
 
-                    # Duplicate note to Staff 2 for TAB rendering
-                    tab_note = ET.fromstring(ET.tostring(note_elem))
-                    tab_note.find(f"{ns}staff").text = "2"
-                    
-                    note_insert_idx = list(measure).index(note_elem) + 1
-                    measure.insert(note_insert_idx, tab_note)
+                        note_global_idx += 1
+                    elif elem.find(f"{ns}rest") is not None:
+                        tab_rest = ET.fromstring(ET.tostring(elem))
+                        tab_rest.find(f"{ns}staff").text = "2"
+                        tab_elements.append(tab_rest)
 
-                    note_idx += 1
+            if measure_duration > 0 and tab_elements:
+                backup_elem = ET.Element(f"{ns}backup")
+                dur_elem = ET.SubElement(backup_elem, f"{ns}duration")
+                dur_elem.text = str(measure_duration)
+
+                measure.append(backup_elem)
+                for tab_elem in tab_elements:
+                    measure.append(tab_elem)
 
             if active_spanner_tag is not None:
                 last_note = measure.findall(f"{ns}note")[-1] if measure.findall(f"{ns}note") else None
