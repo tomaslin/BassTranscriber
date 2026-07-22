@@ -6,15 +6,26 @@ TUNING_PROFILES = {
     '4_string_standard': {1: 43, 2: 38, 3: 33, 4: 28},        # G2, D2, A1, E1
     '5_string_standard': {1: 43, 2: 38, 3: 33, 4: 28, 5: 23},  # G2, D2, A1, E1, B0
     '6_string_standard': {1: 48, 2: 43, 3: 38, 4: 33, 5: 28, 6: 23}, # C3, G2, D2, A1, E1, B0
+    'drop_d': {1: 43, 2: 38, 3: 33, 4: 26},                    # G2, D2, A1, D1
+    '4_string_drop_d': {1: 43, 2: 38, 3: 33, 4: 26},
 }
 
 
 class ErgonomicFretboardHMMSolver:
-    def __init__(self, tuning_type='4_string_standard', beam_width=8):
+    def __init__(self, tuning_type='4_string_standard', beam_width=8, genre_config=None):
+        self.genre_config = genre_config or {}
         self.tuning_type = tuning_type if tuning_type in TUNING_PROFILES else '4_string_standard'
         self.beam_width = beam_width
         self.strings = TUNING_PROFILES[self.tuning_type]
         self.num_frets = 24
+
+        # Read technique penalty costs dynamically from genre config JSON
+        costs = self.genre_config.get("costs", {})
+        self.pop_penalty = costs.get("pop_non_treble_penalty", 25.0)
+        self.slap_penalty = costs.get("slap_non_bass_penalty", 18.0)
+        self.fret_stretch_penalty = costs.get("fret_stretch_penalty", 20.0)
+        self.shift_multiplier = costs.get("position_shift_multiplier", 3.0)
+        self.open_bonus = costs.get("open_string_bonus", -2.0)
 
     def get_valid_positions(self, midi_pitch: int):
         min_p = min(self.strings.values())
@@ -68,14 +79,14 @@ class ErgonomicFretboardHMMSolver:
             tag = note_events[0].tag
             note_dur = note_events[0].duration
 
-            open_cost = (-2.0 if note_dur > 0.3 else 1.5) if fret == 0 else 0.0
+            open_cost = (self.open_bonus if note_dur > 0.3 else 1.5) if fret == 0 else 0.0
             box_cost = (fret * 0.08 if fret <= 7 else fret * 0.20) + open_cost
 
             tech_cost = 0.0
             if tag == "pop":
-                tech_cost = 0.0 if string_num in [1, 2] else 25.0
+                tech_cost = 0.0 if string_num in [1, 2] else self.pop_penalty
             elif tag == "slap":
-                tech_cost = 0.0 if string_num >= 3 else 18.0
+                tech_cost = 0.0 if string_num >= 3 else self.slap_penalty
 
             anchor_dist = abs(fret - initial_anchor) if fret > 0 else 0.0
             anchor_cost = anchor_dist * 0.15
@@ -129,9 +140,9 @@ class ErgonomicFretboardHMMSolver:
                         fret_dist = abs(d_curr - d_prev) * 25.0
 
                         if min(p_fret, c_fret) <= 5 and fret_span > 3:
-                            stretch_penalty = 35.0
+                            stretch_penalty = self.fret_stretch_penalty * 1.75
                         elif fret_span > 4:
-                            stretch_penalty = 20.0
+                            stretch_penalty = self.fret_stretch_penalty
                         else:
                             stretch_penalty = 0.0
 
@@ -145,7 +156,7 @@ class ErgonomicFretboardHMMSolver:
                         strain = 8.0 if (fret_diff > 0 and finger_diff < 0) or (fret_diff < 0 and finger_diff > 0) else 0.0
                         transition_step_cost = (fret_dist * 0.3) + strain
                     else:
-                        transition_step_cost = (anchor_shift * 3.0) / (onset_dt_beats + 0.1)
+                        transition_step_cost = (anchor_shift * self.shift_multiplier) / (onset_dt_beats + 0.1)
 
                     string_diff = c_string - p_string
                     if string_diff == 0:
@@ -155,13 +166,13 @@ class ErgonomicFretboardHMMSolver:
                     else:
                         string_shift = math.pow(abs(string_diff), 1.4) * 2.5
 
-                    open_cost = (-3.0 if (onset_dt_beats > 0.5 or curr_dur > 0.4) else 2.0) if c_fret == 0 else 0.0
+                    open_cost = (self.open_bonus if (onset_dt_beats > 0.5 or curr_dur > 0.4) else 2.0) if c_fret == 0 else 0.0
 
                     tech_cost = 0.0
                     if tag == "pop":
-                        tech_cost = 0.0 if c_string in [1, 2] else 25.0
+                        tech_cost = 0.0 if c_string in [1, 2] else self.pop_penalty
                     elif tag == "slap":
-                        tech_cost = 0.0 if c_string >= 3 else 18.0
+                        tech_cost = 0.0 if c_string >= 3 else self.slap_penalty
 
                     anchor_dist = abs(c_fret - local_anchor) if c_fret > 0 else 0.0
                     anchor_cost = anchor_dist * 0.15

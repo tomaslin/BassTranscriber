@@ -571,47 +571,33 @@ def apply_lossy_abstraction(
     is_compound: bool = False,
     stem_dict: dict = None,
 ) -> list[NoteEvent]:
-    """
-    Applies multi-level lossy abstraction pipeline based on requested complexity mode (Levels 1 to 5):
-    - Level 1: Coarse score (8th notes, no microtones/bends, heavy scale snap, simple dynamics)
-    - Level 2: Moderate score (16th notes, basic gestures, key scale snap)
-    - Level 3: Standard score (Balanced score with slides, legato, key scale, smooth dynamics)
-    - Level 4: Expressive score (Preserves subtle bends, staccato, detail)
-    - Level 5: High-precision audio transcript (Minimal abstraction, raw timings & microtonal cents)
-    """
+    """Applies multi-level lossy abstraction pipeline based on requested complexity mode (Levels 1 to 5)."""
     if not raw_notes:
         return []
 
-    # 1. Filter cross-stem bleed if stems are provided
     if stem_dict is not None:
         raw_notes = cross_stem_bleed_filter(raw_notes, stem_dict, sr)
 
-    # 2. Purge raw DSP artifacts & micro-wobbles
     purged = purge_audio_artifacts(raw_notes, bass_audio=audio_y, sr=sr)
 
-    # 3. Key Signature Detection & Scale Hysteresis Snap (Levels 1-3)
     if abstraction_level <= 3 and audio_y is not None:
         scale_pc, key_root, mode = detect_key_signature(audio_y, sr)
         min_chrom_dur = 0.18 if abstraction_level == 1 else (0.14 if abstraction_level == 2 else 0.10)
         purged = apply_scale_hysteresis(purged, scale_pc, min_chromatic_duration=min_chrom_dur)
 
-    # 4. Gesture Collapsing (Slides, Hammer-ons, Pull-offs) (Levels 1-4)
     if abstraction_level <= 4:
         max_gest_dur = 0.18 if abstraction_level <= 2 else 0.14
         purged = collapse_gestures(purged, max_gesture_duration=max_gest_dur)
 
-    # 5. Beat Grid Quantization & Onset-to-Onset (O2O) Duration Extension
     subdivs = 2 if abstraction_level == 1 else 4
     grid_notes = snap_events_to_beat_grid(
         purged, beat_times=beat_times, bpm=bpm, is_compound=is_compound, subdivisions=subdivs
     )
 
-    # 6. Macro Dynamic Smoothing (Levels 1-4)
     if abstraction_level <= 4:
         win_size = 3.5 if abstraction_level <= 2 else 2.5
         grid_notes = smooth_macro_dynamics(grid_notes, window_size_sec=win_size, hysteresis_threshold=0.25)
 
-    # 7. Post-processing according to abstraction level
     if abstraction_level == 1:
         for n in grid_notes:
             n.microtone_cents = 0.0

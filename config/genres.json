@@ -1,521 +1,1052 @@
 {
-  "afrobeats": {
-    "bpm": [108, 15], "centroid": [380, 100], "density": [3.0, 1.0], "zcr": [0.032, 0.012],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "alternative rock": {
-    "bpm": [125, 25], "centroid": [500, 160], "density": [3.8, 1.1], "zcr": [0.048, 0.022],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "bachata": {
-    "bpm": [130, 15], "centroid": [400, 100], "density": [3.5, 0.8], "zcr": [0.035, 0.015],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "big beat": {
-    "bpm": [128, 12], "centroid": [580, 140], "density": [4.2, 1.0], "zcr": [0.052, 0.02],
-    "features": {"slap_pop": true, "ghost_notes": true, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "blues rock": {
-    "bpm": [115, 25], "centroid": [510, 150], "density": [3.5, 1.2], "zcr": [0.045, 0.02],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": true, "swing": true}
-  },
-  "blues": {
-    "bpm": [100, 30], "centroid": [420, 120], "density": [3.0, 1.0], "zcr": [0.038, 0.018],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": true, "swing": true}
-  },
-  "chicago blues": {
-    "bpm": [105, 25], "centroid": [460, 130], "density": [3.2, 1.0], "zcr": [0.04, 0.018],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": true, "swing": true}
-  },
-  "cool jazz": {
-    "bpm": [115, 30], "centroid": [410, 120], "density": [3.2, 1.1], "zcr": [0.036, 0.016],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "country": {
-    "bpm": [115, 25], "centroid": [430, 110], "density": [2.8, 0.8], "zcr": [0.035, 0.015],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "deep house": {
-    "bpm": [122, 6], "centroid": [340, 90], "density": [3.2, 0.7], "zcr": [0.028, 0.01],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "disco": {
-    "bpm": [120, 10], "centroid": [520, 120], "density": [4.0, 0.8], "zcr": [0.045, 0.015],
-    "features": {"slap_pop": true, "ghost_notes": true, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "electric blues": {
-    "bpm": [110, 30], "centroid": [480, 140], "density": [3.2, 1.1], "zcr": [0.042, 0.02],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": true, "swing": true}
-  },
-  "electro house": {
-    "bpm": [128, 8], "centroid": [620, 160], "density": [4.5, 1.0], "zcr": [0.058, 0.022],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "french house": {
-    "bpm": [124, 8], "centroid": [540, 120], "density": [3.8, 0.8], "zcr": [0.046, 0.016],
-    "features": {"slap_pop": true, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "funk": {
-    "bpm": [105, 18], "centroid": [580, 160], "density": [4.2, 1.2], "zcr": [0.052, 0.022],
-    "features": {"slap_pop": true, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "heavy metal": {
-    "bpm": [145, 35], "centroid": [620, 180], "density": [5.5, 1.8], "zcr": [0.058, 0.025],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "hip hop": {
-    "bpm": [90, 20], "centroid": [300, 90], "density": [2.5, 0.9], "zcr": [0.025, 0.012],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "house": {
-    "bpm": [125, 8], "centroid": [480, 110], "density": [3.5, 0.8], "zcr": [0.038, 0.014],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "jazz fusion": {
-    "bpm": [130, 40], "centroid": [560, 170], "density": [5.2, 1.8], "zcr": [0.05, 0.025],
-    "features": {"slap_pop": true, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "jazz": {
-    "bpm": [140, 50], "centroid": [450, 150], "density": [4.0, 1.5], "zcr": [0.04, 0.02],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "kizomba": {
-    "bpm": [95, 12], "centroid": [320, 80], "density": [2.2, 0.6], "zcr": [0.028, 0.01],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "lambada": {
-    "bpm": [160, 20], "centroid": [500, 130], "density": [4.0, 1.0], "zcr": [0.042, 0.018],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "merengue": {
-    "bpm": [155, 25], "centroid": [480, 130], "density": [4.8, 1.2], "zcr": [0.044, 0.018],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "modal jazz": {
-    "bpm": [120, 35], "centroid": [430, 140], "density": [3.6, 1.2], "zcr": [0.038, 0.018],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "mpb": {
-    "bpm": [110, 25], "centroid": [420, 120], "density": [3.4, 1.0], "zcr": [0.036, 0.016],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "neotango": {
-    "bpm": [120, 20], "centroid": [410, 110], "density": [3.0, 0.9], "zcr": [0.034, 0.014],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "nu-disco": {
-    "bpm": [118, 10], "centroid": [510, 110], "density": [3.8, 0.8], "zcr": [0.042, 0.015],
-    "features": {"slap_pop": true, "ghost_notes": true, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "pop punk": {
-    "bpm": [160, 25], "centroid": [580, 150], "density": [4.8, 1.2], "zcr": [0.054, 0.02],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "pop": {
-    "bpm": [120, 20], "centroid": [450, 120], "density": [3.2, 0.9], "zcr": [0.038, 0.015],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "progressive rock": {
-    "bpm": [130, 35], "centroid": [520, 170], "density": [4.5, 1.5], "zcr": [0.048, 0.022],
-    "features": {"slap_pop": true, "ghost_notes": true, "micro_rhythm": false, "compound_meter": true, "swing": false}
-  },
-  "punk rock": {
-    "bpm": [175, 30], "centroid": [600, 160], "density": [5.2, 1.4], "zcr": [0.06, 0.025],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "reggae": {
-    "bpm": [75, 15], "centroid": [280, 80], "density": [2.2, 0.7], "zcr": [0.022, 0.01],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "reggaeton": {
-    "bpm": [95, 10], "centroid": [350, 90], "density": [2.8, 0.7], "zcr": [0.03, 0.012],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "rock": {
-    "bpm": [120, 20], "centroid": [450, 150], "density": [3.2, 1.0], "zcr": [0.04, 0.02],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "salsa": {
-    "bpm": [180, 30], "centroid": [550, 150], "density": [4.5, 1.2], "zcr": [0.045, 0.02],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "soul": {
-    "bpm": [95, 20], "centroid": [410, 110], "density": [3.0, 0.9], "zcr": [0.035, 0.015],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "swing": {
-    "bpm": [160, 40], "centroid": [460, 140], "density": [4.2, 1.3], "zcr": [0.042, 0.018],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": true}
-  },
-  "synth-pop": {
-    "bpm": [122, 15], "centroid": [490, 120], "density": [3.5, 0.8], "zcr": [0.04, 0.016],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "synthwave": {
-    "bpm": [115, 15], "centroid": [430, 110], "density": [3.2, 0.8], "zcr": [0.034, 0.014],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "thrash metal": {
-    "bpm": [190, 30], "centroid": [650, 200], "density": [6.5, 2.0], "zcr": [0.065, 0.03],
-    "features": {"slap_pop": false, "ghost_notes": false, "micro_rhythm": false, "compound_meter": false, "swing": false}
-  },
-  "timba": {
-    "bpm": [190, 25], "centroid": [600, 180], "density": [5.0, 1.5], "zcr": [0.05, 0.025],
-    "features": {"slap_pop": true, "ghost_notes": true, "micro_rhythm": true, "compound_meter": false, "swing": false}
-  },
-  "zouk": {
-    "bpm": [90, 15], "centroid": [350, 100], "density": [2.5, 0.8], "zcr": [0.03, 0.015],
-    "features": {"slap_pop": false, "ghost_notes": true, "micro_rhythm": false, "compound_meter": false, "swing": false}
+  "default": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
   },
   "acid jazz": {
-      "bpm": [115, 20],
-      "centroid": [520, 140],
-      "density": [4.4, 1.2],
-      "zcr": [0.048, 0.020],
-      "features": {
-        "slap_pop": true,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": true
-      }
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "afro-cuban": {
-      "bpm": [140, 30],
-      "centroid": [480, 130],
-      "density": [4.2, 1.1],
-      "zcr": [0.042, 0.018],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "afro-cuban": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "bluegrass": {
-      "bpm": [140, 35],
-      "centroid": [450, 120],
-      "density": [3.6, 1.0],
-      "zcr": [0.038, 0.015],
-      "features": {
-        "slap_pop": true,
-        "ghost_notes": false,
-        "micro_rhythm": false,
-        "compound_meter": false,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "afrobeats": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "bossa nova": {
-      "bpm": [130, 20],
-      "centroid": [350, 90],
-      "density": [2.8, 0.6],
-      "zcr": [0.030, 0.012],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  },
+  "alternative": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": true
     },
-    "cumbia": {
-      "bpm": [95, 15],
-      "centroid": [380, 100],
-      "density": [3.0, 0.8],
-      "zcr": [0.032, 0.012],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": false,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "alternative rnb": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "death metal": {
-      "bpm": [200, 40],
-      "centroid": [680, 220],
-      "density": [7.0, 2.2],
-      "zcr": [0.070, 0.030],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": false,
-        "micro_rhythm": false,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "alternative rock": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": true
     },
-    "drum and bass": {
-      "bpm": [174, 10],
-      "centroid": [280, 80],
-      "density": [5.0, 1.5],
-      "zcr": [0.025, 0.010],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "bachata": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "dub": {
-      "bpm": [70, 15],
-      "centroid": [220, 60],
-      "density": [1.8, 0.6],
-      "zcr": [0.018, 0.008],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": false,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "big beat": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "dubstep": {
-      "bpm": [140, 10],
-      "centroid": [260, 90],
-      "density": [3.0, 1.2],
-      "zcr": [0.028, 0.012],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "bluegrass": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "gospel": {
-      "bpm": [120, 35],
-      "centroid": [460, 140],
-      "density": [4.5, 1.6],
-      "zcr": [0.042, 0.020],
-      "features": {
-        "slap_pop": true,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": true,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "blues": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": false
     },
-    "grindcore": {
-      "bpm": [220, 50],
-      "centroid": [720, 250],
-      "density": [7.5, 2.5],
-      "zcr": [0.075, 0.035],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": false,
-        "micro_rhythm": false,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "blues rock": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": true
     },
-    "math rock": {
-      "bpm": [135, 30],
-      "centroid": [540, 160],
-      "density": [4.8, 1.6],
-      "zcr": [0.048, 0.020],
-      "features": {
-        "slap_pop": true,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": true,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "bossa nova": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "motown": {
-      "bpm": [112, 18],
-      "centroid": [420, 110],
-      "density": [3.8, 1.0],
-      "zcr": [0.036, 0.014],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "chicago blues": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": false
     },
-    "neo-soul": {
-      "bpm": [85, 15],
-      "centroid": [320, 90],
-      "density": [2.6, 0.8],
-      "zcr": [0.026, 0.010],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "cool jazz": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "nu metal": {
-      "bpm": [110, 25],
-      "centroid": [580, 170],
-      "density": [4.2, 1.4],
-      "zcr": [0.055, 0.022],
-      "features": {
-        "slap_pop": true,
-        "ghost_notes": true,
-        "micro_rhythm": false,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "country": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "post-hardcore": {
-      "bpm": [165, 30],
-      "centroid": [600, 170],
-      "density": [5.2, 1.5],
-      "zcr": [0.058, 0.024],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": false,
-        "micro_rhythm": false,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "cumbia": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "post-rock": {
-      "bpm": [110, 30],
-      "centroid": [440, 150],
-      "density": [2.8, 1.2],
-      "zcr": [0.036, 0.018],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": false,
-        "micro_rhythm": false,
-        "compound_meter": true,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "dark pop": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "ska": {
-      "bpm": [160, 25],
-      "centroid": [500, 130],
-      "density": [4.2, 1.0],
-      "zcr": [0.044, 0.018],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": false,
-        "compound_meter": false,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "death metal": {
+    "tuning": "5_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": true
     },
-    "son cubano": {
-      "bpm": [115, 20],
-      "centroid": [440, 110],
-      "density": [3.6, 0.9],
-      "zcr": [0.038, 0.015],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": true
-      }
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 20.0,
+      "fret_stretch_penalty": 30.0,
+      "position_shift_multiplier": 4.0,
+      "open_string_bonus": -4.0
+    }
+  },
+  "deep house": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "techno": {
-      "bpm": [130, 10],
-      "centroid": [420, 110],
-      "density": [4.0, 0.8],
-      "zcr": [0.036, 0.014],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": false,
-        "micro_rhythm": false,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "disco": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "trance": {
-      "bpm": [138, 8],
-      "centroid": [480, 120],
-      "density": [4.2, 0.8],
-      "zcr": [0.040, 0.015],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": false,
-        "micro_rhythm": false,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "drum and bass": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "tango": {
-      "bpm": [120, 20],
-      "centroid": [400, 110],
-      "density": [2.8, 0.8],
-      "zcr": [0.032, 0.014],
-      "features": {
-        "slap_pop": false,
-        "ghost_notes": true,
-        "micro_rhythm": true,
-        "compound_meter": false,
-        "swing": false
-      }
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  },
+  "dub": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
     },
-    "alternative": {
-        "bpm": [120, 25],
-        "centroid": [480, 150],
-        "density": [3.6, 1.0],
-        "zcr": [0.045, 0.020],
-        "features": {
-          "slap_pop": false,
-          "ghost_notes": true,
-          "micro_rhythm": false,
-          "compound_meter": false,
-          "swing": false
-        }
-      },
-      "alternative rnb": {
-        "bpm": [90, 20],
-        "centroid": [310, 95],
-        "density": [2.6, 0.8],
-        "zcr": [0.026, 0.011],
-        "features": {
-          "slap_pop": false,
-          "ghost_notes": true,
-          "micro_rhythm": true,
-          "compound_meter": false,
-          "swing": true
-        }
-      },
-      "dark pop": {
-        "bpm": [110, 20],
-        "centroid": [420, 110],
-        "density": [3.0, 0.8],
-        "zcr": [0.035, 0.015],
-        "features": {
-          "slap_pop": false,
-          "ghost_notes": true,
-          "micro_rhythm": false,
-          "compound_meter": false,
-          "swing": false
-        }
-      },
-      "funk metal": {
-        "bpm": [125, 30],
-        "centroid": [610, 175],
-        "density": [5.2, 1.6],
-        "zcr": [0.058, 0.025],
-        "features": {
-          "slap_pop": true,
-          "ghost_notes": true,
-          "micro_rhythm": true,
-          "compound_meter": false,
-          "swing": true
-        }
-      },
-      "progressive metal": {
-        "bpm": [135, 35],
-        "centroid": [600, 180],
-        "density": [5.0, 1.8],
-        "zcr": [0.055, 0.024],
-        "features": {
-          "slap_pop": true,
-          "ghost_notes": true,
-          "micro_rhythm": false,
-          "compound_meter": true,
-          "swing": false
-        }
-      }
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  },
+  "dubstep": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  },
+  "electric blues": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "electro house": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "french house": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "funk": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "funk metal": {
+    "tuning": "5_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "gospel": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "grindcore": {
+    "tuning": "5_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 20.0,
+      "fret_stretch_penalty": 30.0,
+      "position_shift_multiplier": 4.0,
+      "open_string_bonus": -4.0
+    }
+  },
+  "heavy metal": {
+    "tuning": "5_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 20.0,
+      "fret_stretch_penalty": 30.0,
+      "position_shift_multiplier": 4.0,
+      "open_string_bonus": -4.0
+    }
+  },
+  "hip hop": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  },
+  "house": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "jazz": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "jazz fusion": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "kizomba": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  },
+  "lambada": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "math rock": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "merengue": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "modal jazz": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "motown": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "mpb": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "neo-soul": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "neotango": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "nu metal": {
+    "tuning": "5_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 20.0,
+      "fret_stretch_penalty": 30.0,
+      "position_shift_multiplier": 4.0,
+      "open_string_bonus": -4.0
+    }
+  },
+  "nu-disco": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "pop": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "pop punk": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "post-hardcore": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "post-rock": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": true,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "progressive metal": {
+    "tuning": "5_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 20.0,
+      "fret_stretch_penalty": 30.0,
+      "position_shift_multiplier": 4.0,
+      "open_string_bonus": -4.0
+    }
+  },
+  "progressive rock": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "punk rock": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "reggae": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  },
+  "reggaeton": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "rock": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "salsa": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "ska": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "son cubano": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "soul": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "swing": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "synth-pop": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "synthwave": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "tango": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "techno": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "thrash metal": {
+    "tuning": "5_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 20.0,
+      "fret_stretch_penalty": 30.0,
+      "position_shift_multiplier": 4.0,
+      "open_string_bonus": -4.0
+    }
+  },
+  "timba": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "trance": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  },
+  "zouk": {
+    "tuning": "4_string_standard",
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  }
 }

@@ -7,8 +7,16 @@ from xml_formatter import (
     idiomatic_rhythm_snap,
     decompose_duration_engraver_rules,
     consolidate_measure_notation,
+    build_m21_duration,
     sanitize_and_inject_tablature,
 )
+
+
+def _make_rest(r_dur):
+    """Helper to instantiate a Rest with explicit duration type & tuplet notation if required."""
+    r = note.Rest()
+    r.duration = build_m21_duration(r_dur)
+    return r
 
 
 def build_and_export_score(
@@ -27,10 +35,6 @@ def build_and_export_score(
     time_sig_str: str = "4/4",
     tuning_type: str = "4_string_standard",
 ):
-    """
-    Builds music21 score stream, eliminates temporal drift, handles anacrusis,
-    attaches fingerings/harmonics, defines Electric Bass MIDI Program 33, and exports MusicXML.
-    """
     sec_per_quarter = (60.0 / bpm) if bpm > 0 else 0.5
 
     time_sig_map = {
@@ -46,7 +50,6 @@ def build_and_export_score(
     m21_score = stream.Score()
     m21_part = stream.Part(id="P1")
 
-    # MIDI Instrument Definition: Electric Bass (Program 33)
     bass_inst = instrument.ElectricBass()
     bass_inst.midiProgram = 33
     m21_part.insert(0.0, bass_inst)
@@ -71,8 +74,9 @@ def build_and_export_score(
     prev_midi = None
 
     for i, note_evt in enumerate(note_layer):
-        start_q = fractions.Fraction(round((note_evt.start / sec_per_quarter) * 4), 4)
-        raw_dur_q = max(0.25, note_evt.duration / sec_per_quarter)
+        subdiv = 12 if (is_compound or note_evt.is_triplet) else 16
+        start_q = fractions.Fraction(round((note_evt.start / sec_per_quarter) * subdiv), subdiv)
+        raw_dur_q = note_evt.duration / sec_per_quarter
         dur_q = idiomatic_rhythm_snap(raw_dur_q, level=target_level, is_compound=is_compound)
 
         if start_q < current_time_q:
@@ -82,8 +86,7 @@ def build_and_export_score(
             rest_q = start_q - current_time_q
             rest_chunks = decompose_duration_engraver_rules(rest_q, curr_m_fill, measure_capacity, is_compound)
             for r_dur in rest_chunks:
-                r = note.Rest()
-                r.quarterLength = float(r_dur)
+                r = _make_rest(r_dur)
                 curr_measure.append(r)
                 curr_m_fill += r_dur
                 current_time_q += r_dur
@@ -92,6 +95,7 @@ def build_and_export_score(
                     m21_part.append(curr_measure)
                     curr_measure_num += 1
                     curr_measure = stream.Measure(number=curr_measure_num)
+                    curr_measure.append(meter.TimeSignature(time_sig_str))
                     curr_m_fill = fractions.Fraction(0, 1)
 
         if instant_bpms is not None and beat_times is not None and i < len(beat_times):
@@ -143,12 +147,7 @@ def build_and_export_score(
             if note_evt.is_harmonic:
                 elem_sub.articulations.append(articulations.Harmonic())
 
-            # Safely handle triplet tuplet attachments
-            if note_evt.is_triplet and k == 0 and float(chunk_dur) >= 0.125:
-                elem_sub.duration = duration.Duration(float(chunk_dur))
-                elem_sub.duration.appendTuplet(duration.Tuplet(3, 2))
-            else:
-                elem_sub.quarterLength = max(0.0625, float(chunk_dur))
+            elem_sub.duration = build_m21_duration(chunk_dur)
 
             if note_evt.tag == "ghost":
                 elem_sub.notehead = 'x'
@@ -175,14 +174,14 @@ def build_and_export_score(
                 m21_part.append(curr_measure)
                 curr_measure_num += 1
                 curr_measure = stream.Measure(number=curr_measure_num)
+                curr_measure.append(meter.TimeSignature(time_sig_str))
                 curr_m_fill = fractions.Fraction(0, 1)
 
     if curr_m_fill > 0 and curr_m_fill < measure_capacity:
         remaining_q = measure_capacity - curr_m_fill
         rest_chunks = decompose_duration_engraver_rules(remaining_q, curr_m_fill, measure_capacity, is_compound)
         for r_dur in rest_chunks:
-            r = note.Rest()
-            r.quarterLength = float(r_dur)
+            r = _make_rest(r_dur)
             curr_measure.append(r)
             curr_m_fill += r_dur
 

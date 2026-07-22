@@ -31,15 +31,12 @@ def filter_octave_jumps(note_events: list, max_jump_semitones: int = 10) -> list
         curr_p = note_events[i].pitch
         next_p = note_events[i + 1].pitch
 
-        # Check if current note jumps up or down by ~12/24 semitones compared to neighbors
         diff_prev = curr_p - prev_p
         diff_next = curr_p - next_p
 
         if abs(diff_prev - 12) <= 1 and abs(diff_next - 12) <= 1:
-            # Jumped up 1 octave erroneously -> fold down
             note_events[i].update_pitch(curr_p - 12)
         elif abs(diff_prev + 12) <= 1 and abs(diff_next + 12) <= 1:
-            # Jumped down 1 octave erroneously -> fold up
             note_events[i].update_pitch(curr_p + 12)
 
     return note_events
@@ -70,7 +67,7 @@ def normalize_key_str(raw_key: str):
 def detect_key_signature(audio_y, sr, parsed_key=None, bass_filter_fn=None):
     """
     Detects musical key signature and mode using chroma profiles across Major,
-    Minor, Mixolydian, Dorian, and Blues profiles. Correctly instantiates modal key objects.
+    Minor, Mixolydian, Dorian, and Blues profiles.
     """
     if parsed_key:
         normalized = normalize_key_str(parsed_key)

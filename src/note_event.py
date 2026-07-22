@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional
-
+from typing import List, Optional, Tuple
 
 @dataclass
 class NoteEvent:
@@ -18,7 +17,11 @@ class NoteEvent:
     dynamic_mark: str = "mf"  # p, mp, mf, f
     is_pickup: bool = False
     is_harmonic: bool = False
-    slide_from: Optional[int] = None  # Source MIDI pitch if note arrived via a slide/hammer-on
+    slide_from: Optional[int] = None
+    
+    # Genre-driven finger position assignment (String, Fret, Finger)
+    fret_position: Optional[Tuple[int, int, int]] = None
+    is_downpick: bool = False
 
     @property
     def duration(self) -> float:
@@ -29,7 +32,6 @@ class NoteEvent:
         self.pitches = [new_pitch]
 
     def to_dict(self) -> dict:
-        """Helper to serialize NoteEvent for tab engines, UI rendering, or JSON export."""
         d = asdict(self)
         d['duration'] = self.duration
         return d

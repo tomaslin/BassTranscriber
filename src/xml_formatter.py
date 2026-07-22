@@ -1,7 +1,7 @@
 import fractions
 import xml.etree.ElementTree as ET
+from music21 import duration
 
-# Key Accidentals Map (-7 to +7 fifths)
 KEY_ACCIDENTALS = {
     0: {},
     1: {"F": ("1", "sharp")},
@@ -20,7 +20,6 @@ KEY_ACCIDENTALS = {
     -7: {"B": ("-1", "flat"), "E": ("-1", "flat"), "A": ("-1", "flat"), "D": ("-1", "flat"), "G": ("-1", "flat"), "C": ("-1", "flat"), "F": ("-1", "flat")},
 }
 
-# Bass Staff Tunings (Ordered Line 1 [Bottom] -> Line N [Top])
 BASS_TUNINGS = {
     "4_string_standard": [('E', 1), ('A', 1), ('D', 2), ('G', 2)],
     "5_string_standard": [('B', 0), ('E', 1), ('A', 1), ('D', 2), ('G', 2)],
@@ -82,46 +81,113 @@ def idiomatic_rhythm_snap(dur_q, level=5, is_compound=False):
     a minimum duration threshold (1/16th or 1/32nd) to prevent micro-durations.
     """
     if isinstance(dur_q, (float, int)):
-        # Round floating point noise to avoid fraction exploding
         dur_q = round(float(dur_q), 4)
-        dur_q = fractions.Fraction(dur_q).limit_denominator(16 if level <= 3 else 32)
+    
+    dur_q = fractions.Fraction(dur_q).limit_denominator(12 if is_compound else 32)
     
     MIN_DURATION = fractions.Fraction(1, 16) if level <= 3 else fractions.Fraction(1, 32)
     if dur_q < MIN_DURATION:
         return MIN_DURATION
 
-    if is_compound:
-        return fractions.Fraction(dur_q).limit_denominator(12)
-    return fractions.Fraction(round(float(dur_q) * 4), 4)
+    return dur_q
+
+
+def build_m21_duration(dur_q):
+    """
+    Constructs a music21 duration.Duration object explicitly using type names,
+    preventing MusicXMLExportException during MusicXML serialization.
+    """
+    dur_frac = fractions.Fraction(dur_q).limit_denominator(32)
+
+    MAP = {
+        fractions.Fraction(4, 1): ("whole", 0, None),
+        fractions.Fraction(3, 1): ("half", 1, None),
+        fractions.Fraction(2, 1): ("half", 0, None),
+        fractions.Fraction(3, 2): ("quarter", 1, None),
+        fractions.Fraction(1, 1): ("quarter", 0, None),
+        fractions.Fraction(3, 4): ("eighth", 1, None),
+        fractions.Fraction(2, 3): ("quarter", 0, duration.Tuplet(3, 2)),
+        fractions.Fraction(1, 2): ("eighth", 0, None),
+        fractions.Fraction(3, 8): ("16th", 1, None),
+        fractions.Fraction(1, 3): ("eighth", 0, duration.Tuplet(3, 2)),
+        fractions.Fraction(1, 4): ("16th", 0, None),
+        fractions.Fraction(3, 16): ("32nd", 1, None),
+        fractions.Fraction(1, 6): ("16th", 0, duration.Tuplet(3, 2)),
+        fractions.Fraction(1, 8): ("32nd", 0, None),
+        fractions.Fraction(1, 12): ("32nd", 0, duration.Tuplet(3, 2)),
+        fractions.Fraction(1, 16): ("64th", 0, None),
+        fractions.Fraction(1, 32): ("128th", 0, None),
+    }
+
+    if dur_frac in MAP:
+        type_str, dots, tup = MAP[dur_frac]
+        d = duration.Duration(type=type_str)
+        d.dots = dots
+        if tup is not None:
+            d.tuplets = (tup,)
+        return d
+
+    closest_frac = min(MAP.keys(), key=lambda f: abs(f - dur_frac))
+    type_str, dots, tup = MAP[closest_frac]
+    d = duration.Duration(type=type_str)
+    d.dots = dots
+    if tup is not None:
+        d.tuplets = (tup,)
+    return d
 
 
 def decompose_duration_engraver_rules(dur_q, curr_m_fill, measure_capacity, is_compound=False):
-    """Decomposes durations into tied chunks across measure/beat boundaries safely."""
+    """
+    Decomposes durations strictly into expressible MusicXML standard & triplet values 
+    to prevent inexpressible duration exceptions in music21.
+    """
     dur_q = fractions.Fraction(dur_q).limit_denominator(32)
     curr_m_fill = fractions.Fraction(curr_m_fill).limit_denominator(32)
     measure_capacity = fractions.Fraction(measure_capacity).limit_denominator(32)
     
-    MIN_CHUNK = fractions.Fraction(1, 16)
+    allowed_values = [
+        fractions.Fraction(4, 1),
+        fractions.Fraction(3, 1),
+        fractions.Fraction(2, 1),
+        fractions.Fraction(3, 2),
+        fractions.Fraction(1, 1),
+        fractions.Fraction(3, 4),
+        fractions.Fraction(2, 3),
+        fractions.Fraction(1, 2),
+        fractions.Fraction(3, 8),
+        fractions.Fraction(1, 3),
+        fractions.Fraction(1, 4),
+        fractions.Fraction(3, 16),
+        fractions.Fraction(1, 6),
+        fractions.Fraction(1, 8),
+        fractions.Fraction(1, 12),
+        fractions.Fraction(1, 16),
+        fractions.Fraction(1, 32),
+    ]
+    
     chunks = []
-
     while dur_q > 0:
         rem_in_m = measure_capacity - curr_m_fill
         if rem_in_m <= 0:
             curr_m_fill = fractions.Fraction(0, 1)
             rem_in_m = measure_capacity
             
-        chunk = min(dur_q, rem_in_m)
+        best_val = None
+        for val in allowed_values:
+            if val <= dur_q and val <= rem_in_m:
+                best_val = val
+                break
         
-        # Prevent trailing micro-chunks from being created by tie decompositions
-        if 0 < chunk < MIN_CHUNK and chunks:
-            chunks[-1] += chunk
-            curr_m_fill += chunk
-            dur_q -= chunk
-            break
-
-        chunks.append(chunk)
-        dur_q -= chunk
-        curr_m_fill += chunk
+        if best_val is None:
+            if dur_q >= fractions.Fraction(1, 64):
+                best_val = min(fractions.Fraction(1, 32), rem_in_m)
+                dur_q = fractions.Fraction(0, 1)
+            else:
+                break
+                
+        chunks.append(best_val)
+        dur_q -= best_val
+        curr_m_fill += best_val
         if curr_m_fill >= measure_capacity:
             curr_m_fill = fractions.Fraction(0, 1)
 
@@ -129,8 +195,43 @@ def decompose_duration_engraver_rules(dur_q, curr_m_fill, measure_capacity, is_c
 
 
 def consolidate_measure_notation(curr_measure, measure_capacity, is_compound=False):
-    """Placeholder helper for music21 measure consolidation pass."""
-    pass
+    """
+    Consolidates measure notation, verifying all contained notes and rests have valid
+    MusicXML duration types for downstream exporters and rendering engines.
+    """
+    if curr_measure is None:
+        return
+
+    for elem in list(curr_measure.notesAndRests):
+        if not hasattr(elem, 'duration') or elem.duration is None:
+            elem.duration = build_m21_duration(1.0)
+        elif not elem.duration.type or elem.duration.type == 'inexpressible':
+            elem.duration = build_m21_duration(elem.duration.quarterLength)
+
+
+def ensure_note_type(note_elem, current_divisions, ns=""):
+    """Ensures that a MusicXML note or rest element has an explicit <type> child."""
+    type_elem = note_elem.find(f"{ns}type")
+    if type_elem is None or not type_elem.text:
+        dur_elem = note_elem.find(f"{ns}duration")
+        if dur_elem is not None and dur_elem.text and current_divisions > 0:
+            try:
+                dur_val = int(dur_elem.text)
+                ql = dur_val / float(current_divisions)
+                type_str = None
+                if ql >= 3.5: type_str = "whole"
+                elif ql >= 1.75: type_str = "half"
+                elif ql >= 0.875: type_str = "quarter"
+                elif ql >= 0.4375: type_str = "eighth"
+                elif ql >= 0.21875: type_str = "16th"
+                elif ql >= 0.109375: type_str = "32nd"
+                elif ql >= 0.0546875: type_str = "64th"
+                else: type_str = "128th"
+
+                if type_str:
+                    set_or_create(note_elem, "type", type_str)
+            except ValueError:
+                pass
 
 
 def sanitize_and_inject_tablature(
@@ -148,7 +249,6 @@ def sanitize_and_inject_tablature(
     ns = root.tag.split('}')[0] + '}' if '}' in root.tag else ""
     root.tag = f"{ns}score-partwise"
 
-    # Set metadata in root obeying MusicXML schema sequence
     set_or_create(root, "movement-title", song_title)
     work_elem = root.find(f"{ns}work") or ET.SubElement(root, f"{ns}work")
     set_or_create(work_elem, "work-title", song_title)
@@ -167,7 +267,7 @@ def sanitize_and_inject_tablature(
             score_part, f"{ns}midi-instrument", attrib={"id": f"{score_part_id}-I1"}
         )
         set_or_create(midi_inst, "midi-channel", "1")
-        set_or_create(midi_inst, "midi-program", "33")  # Electric Bass (Finger)
+        set_or_create(midi_inst, "midi-program", "33")
 
     first_part = root.find(f"{ns}part")
     if first_part is None:
@@ -176,7 +276,6 @@ def sanitize_and_inject_tablature(
     first_part.attrib["id"] = score_part_id
     measures = list(first_part.findall(f"{ns}measure"))
 
-    # Measure Setup Pass
     for m_idx, measure in enumerate(measures, 1):
         if m_idx > 1 and (m_idx - 1) % 4 == 0:
             for existing_p in measure.findall(f"{ns}print"):
@@ -211,8 +310,6 @@ def sanitize_and_inject_tablature(
             ET.SubElement(clef2, f"{ns}line").text = "5"
 
             staff_details = ET.SubElement(attrs, f"{ns}staff-details", attrib={"number": "2"})
-            
-            # Line 1 = Bottom line (lowest pitch), Line N = Top line (highest pitch)
             tunings = BASS_TUNINGS.get(tuning_type, BASS_TUNINGS["4_string_standard"])
 
             ET.SubElement(staff_details, f"{ns}staff-lines").text = str(len(tunings))
@@ -223,12 +320,12 @@ def sanitize_and_inject_tablature(
 
             reorder_children(attrs, ATTRS_SCHEMA_ORDER, ns)
 
-    # Note & Tab Processing Pass
     note_evt_idx = 0
     active_spanner_tag = None
     in_legato = False
     in_slide = False
     current_fifths = 0
+    current_divisions = 1
 
     last_note_elem = None
 
@@ -237,11 +334,20 @@ def sanitize_and_inject_tablature(
         for measure in part.findall(f"{ns}measure"):
             attrs = measure.find(f"{ns}attributes")
             if attrs is not None:
+                divs_elem = attrs.find(f"{ns}divisions")
+                if divs_elem is not None and divs_elem.text:
+                    try:
+                        current_divisions = int(divs_elem.text)
+                    except ValueError:
+                        pass
                 key_elem = attrs.find(f"{ns}key")
                 if key_elem is not None:
                     fifths_elem = key_elem.find(f"{ns}fifths")
                     if fifths_elem is not None and fifths_elem.text:
                         current_fifths = int(fifths_elem.text)
+
+            for old_b in measure.findall(f"{ns}backup"):
+                measure.remove(old_b)
 
             m_children = list(measure)
             staff1_duration = 0
@@ -250,10 +356,10 @@ def sanitize_and_inject_tablature(
 
             for elem in m_children:
                 if elem.tag == f"{ns}note":
+                    ensure_note_type(elem, current_divisions, ns)
                     is_rest = elem.find(f"{ns}rest") is not None
                     is_chord = elem.find(f"{ns}chord") is not None
                     
-                    # Detect tied continuation notes (tied from previous beat/measure)
                     is_tie_stop = (
                         elem.find(f"{ns}tie[@type='stop']") is not None or
                         elem.find(f"{ns}notations/tied[@type='stop']") is not None
@@ -274,7 +380,6 @@ def sanitize_and_inject_tablature(
                             except ValueError:
                                 oct_val = 3
 
-                            # Bass Clef Stem Rules: Middle line is D3. Below D3 -> UP, D3 & above -> DOWN.
                             if oct_val < 3 or (oct_val == 3 and step_val == "C"):
                                 set_or_create(elem, "stem", "up")
                             else:
@@ -291,7 +396,6 @@ def sanitize_and_inject_tablature(
                                 acc_type = "sharp" if alt_val == "1" else ("flat" if alt_val == "-1" else "natural")
                                 set_or_create(elem, "accidental", acc_type)
 
-                        # Event binding: Advance index ONLY on primary new note events
                         if not is_chord and not is_tie_stop:
                             if snapped_layer and note_evt_idx < len(snapped_layer):
                                 current_evt = snapped_layer[note_evt_idx]
@@ -301,7 +405,6 @@ def sanitize_and_inject_tablature(
 
                         evt = current_evt
 
-                        # Expressive & Tab Processing
                         if evt is not None:
                             notations = elem.find(f"{ns}notations") or ET.SubElement(elem, f"{ns}notations")
                             technical = notations.find(f"{ns}technical") or ET.SubElement(notations, f"{ns}technical")
@@ -314,13 +417,11 @@ def sanitize_and_inject_tablature(
                             except ValueError:
                                 fret_val = getattr(evt, 'fret_val', None)
 
-                            # Techniques
                             if evt.tag == "slap" and technical.find(f"{ns}slap") is None:
                                 ET.SubElement(technical, f"{ns}slap")
                             elif evt.tag == "pop" and technical.find(f"{ns}pop") is None:
                                 ET.SubElement(technical, f"{ns}pop")
 
-                            # Dashes Spanner State Machine (P.M. / Let Ring)
                             if evt.tag in ["palm_mute", "let_ring"]:
                                 if active_spanner_tag != evt.tag:
                                     if active_spanner_tag is not None:
@@ -336,7 +437,6 @@ def sanitize_and_inject_tablature(
                             if evt.tag == "ghost":
                                 set_or_create(elem, "notehead", "x")
 
-                            # Legato Spanner Tracking
                             is_evt_legato = getattr(evt, 'is_legato', False)
                             if in_legato and not is_evt_legato:
                                 ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "stop", "number": "1"})
@@ -347,7 +447,6 @@ def sanitize_and_inject_tablature(
                                 ET.SubElement(notations, f"{ns}slur", attrib={"type": "start", "number": "1"})
                                 in_legato = True
 
-                            # Slide Spanner Tracking
                             is_evt_slide = getattr(evt, 'is_slide', False)
                             if in_slide and not is_evt_slide:
                                 ET.SubElement(notations, f"{ns}slide", attrib={"type": "stop", "number": "1"})
@@ -356,7 +455,6 @@ def sanitize_and_inject_tablature(
                                 ET.SubElement(notations, f"{ns}slide", attrib={"type": "start", "number": "1"}).text = "sl."
                                 in_slide = True
 
-                            # Bends
                             positive_bends = [b for b in (getattr(evt, 'bends', []) or []) if b > 0.05]
                             if fret_val is not None and fret_val > 0 and positive_bends:
                                 bend_elem = ET.SubElement(technical, f"{ns}bend")
@@ -365,7 +463,6 @@ def sanitize_and_inject_tablature(
                                 bend_elem = ET.SubElement(technical, f"{ns}bend")
                                 ET.SubElement(bend_elem, f"{ns}bend-alter").text = str(round(evt.microtone_cents / 100.0, 2))
 
-                            # Clean string/fret from Staff 1
                             if string_elem is not None: technical.remove(string_elem)
                             if fret_elem is not None: technical.remove(fret_elem)
                             if len(technical) == 0: notations.remove(technical)
@@ -373,7 +470,6 @@ def sanitize_and_inject_tablature(
 
                             last_note_elem = elem
 
-                        # Clone note for TAB Staff (Staff 2)
                         tab_note = ET.fromstring(ET.tostring(elem))
                         set_or_create(tab_note, "staff", "2")
                         set_or_create(tab_note, "voice", "1")
@@ -386,7 +482,6 @@ def sanitize_and_inject_tablature(
                         if tab_tech.find(f"{ns}fret") is None and fret_val is not None:
                             ET.SubElement(tab_tech, f"{ns}fret").text = str(fret_val)
 
-                        # Clean redundant non-TAB markings on Staff 2 note
                         tab_accidental = tab_note.find(f"{ns}accidental")
                         if tab_accidental is not None:
                             tab_note.remove(tab_accidental)
@@ -397,7 +492,6 @@ def sanitize_and_inject_tablature(
                         tab_elements.append(tab_note)
 
                     else:
-                        # Processing Rest
                         set_or_create(elem, "staff", "1")
                         set_or_create(elem, "voice", "1")
                         reorder_children(elem, NOTE_SCHEMA_ORDER, ns)
@@ -413,7 +507,6 @@ def sanitize_and_inject_tablature(
                     if not is_chord and dur_text:
                         staff1_duration += int(dur_text)
 
-            # Append TAB Voice via Backup
             if staff1_duration > 0 and tab_elements:
                 backup_elem = ET.Element(f"{ns}backup")
                 ET.SubElement(backup_elem, f"{ns}duration").text = str(staff1_duration)
@@ -421,7 +514,6 @@ def sanitize_and_inject_tablature(
                 for tab_elem in tab_elements:
                     measure.append(tab_elem)
 
-    # DANGLING SPANNER CLEANUP: Close any remaining open spanners on the last note
     if last_note_elem is not None:
         notations = last_note_elem.find(f"{ns}notations") or ET.SubElement(last_note_elem, f"{ns}notations")
         technical = notations.find(f"{ns}technical") or ET.SubElement(notations, f"{ns}technical")

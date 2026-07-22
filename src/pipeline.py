@@ -25,46 +25,58 @@ from fretboard_hmm import ErgonomicFretboardHMMSolver
 from score_builder import build_and_export_score
 
 
-def load_genre_configs():
-    config_path = os.path.join(os.path.dirname(__file__), "..", "config", "genres.json")
+def load_genre_configs(config_path=None):
+    """Loads genre configurations dynamically from a JSON file."""
+    if not config_path:
+        config_path = os.path.join(os.path.dirname(__file__), "..", "config", "genres.json")
+
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
 
-GENRE_CONFIGS = load_genre_configs()
+def resolve_genre(raw_genre, genre_configs=None):
+    """Resolves genre string against dynamically loaded JSON configs."""
+    if genre_configs is None:
+        genre_configs = load_genre_configs()
 
-
-def resolve_genre(raw_genre):
     if not raw_genre:
-        return "default", None
+        default_cfg = genre_configs.get("default", {})
+        return "default", default_cfg
 
     clean = raw_genre.strip().lower()
-    if clean in GENRE_CONFIGS:
-        return clean, GENRE_CONFIGS[clean]
+    if clean in genre_configs:
+        return clean, genre_configs[clean]
 
-    for g in GENRE_CONFIGS:
+    for g in genre_configs:
         if g in clean or clean in g:
-            return g, GENRE_CONFIGS[g]
+            return g, genre_configs[g]
 
-    matches = difflib.get_close_matches(clean, GENRE_CONFIGS.keys(), n=1, cutoff=0.3)
-    return (matches[0], GENRE_CONFIGS[matches[0]]) if matches else ("default", None)
+    matches = difflib.get_close_matches(clean, genre_configs.keys(), n=1, cutoff=0.3)
+    if matches:
+        return matches[0], genre_configs[matches[0]]
+
+    return "default", genre_configs.get("default", {})
 
 
-def parse_metadata_from_path(folder_path):
+def parse_metadata_from_path(folder_path, custom_genre=None, config_path=None):
     folder_name = os.path.basename(os.path.normpath(folder_path))
     clean_name = re.sub(r'(?i)^stems_', '', folder_name).strip()
 
-    artist, title, genre_str, key_str = "Unknown Artist", "Bass Track", None, None
+    genre_configs = load_genre_configs(config_path)
+    artist, title, genre_str, key_str = "Unknown Artist", "Bass Track", custom_genre, None
 
     if ' - ' in clean_name:
         left, right = clean_name.rsplit(' - ', 1)
         title = right.replace('_', ' ').strip().title()
         parts = left.split('_')
 
-        if parts and resolve_genre(parts[0])[1]:
-            genre_str, parts = parts[0], parts[1:]
+        if not genre_str and parts:
+            resolved_g, resolved_cfg = resolve_genre(parts[0], genre_configs)
+            if resolved_g != "default":
+                genre_str, parts = parts[0], parts[1:]
+
         if parts and re.match(r'^(?i)[a-g][#b\-]?(_?(minor|major|min|maj|m))?$', parts[0]):
             key_str, parts = parts[0], parts[1:]
 
@@ -76,7 +88,7 @@ def parse_metadata_from_path(folder_path):
         elif parts:
             title = parts[0].title()
 
-    resolved_genre_name, genre_config = resolve_genre(genre_str)
+    resolved_genre_name, genre_config = resolve_genre(genre_str, genre_configs)
     return artist, title, clean_name, key_str, resolved_genre_name, genre_config
 
 
@@ -113,7 +125,7 @@ def filter_performance_for_level(
         eighth_beats.append(beats[i])
         eighth_beats.append((beats[i] + beats[i+1]) / 2.0)
 
-    ghost_enabled = genre_config["features"].get("ghost_notes", True) if genre_config else True
+    ghost_enabled = genre_config.get("features", {}).get("ghost_notes", True) if genre_config else True
 
     if level <= 1:
         target_beats = np.sort(np.unique(np.concatenate((downbeats, half_measure_beats))))
@@ -177,15 +189,18 @@ def filter_performance_for_level(
 
 
 class AudioTranscriptionPipeline:
-    def __init__(self, output_dir=None):
+    def __init__(self, output_dir=None, genre_config_path=None):
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self.output_dir = output_dir or os.path.join(project_root, 'output_bass')
+        self.genre_config_path = genre_config_path
 
-    def run(self, stem_folder: str, generate_all_levels=False, level=5, use_gpu=False):
-        artist_name, song_title, _, parsed_key_str, resolved_genre, genre_config = parse_metadata_from_path(stem_folder)
+    def run(self, stem_folder: str, generate_all_levels=False, level=5, use_gpu=False, genre_override=None):
+        artist_name, song_title, _, parsed_key_str, resolved_genre, genre_config = parse_metadata_from_path(
+            stem_folder, custom_genre=genre_override, config_path=self.genre_config_path
+        )
         clean_filename = re.sub(r'[\\/*?:"<>|]', "", f"{artist_name} - {song_title}").strip()
 
-        print(f"[Processing] {artist_name} - {song_title}")
+        print(f"[Processing] {artist_name} - {song_title} (Genre: {resolved_genre})")
 
         bass_path = os.path.join(stem_folder, 'bass.wav')
         drums_path = os.path.join(stem_folder, 'drums.wav') if os.path.exists(os.path.join(stem_folder, 'drums.wav')) else bass_path
@@ -226,7 +241,6 @@ class AudioTranscriptionPipeline:
             n.update_pitch(p_clamped)
             corrected_notes.append(n)
 
-        # Apply octave jump heuristic filter for sub-bass tracks
         octave_smoothed_notes = filter_octave_jumps(corrected_notes)
 
         verified_notes = cross_stem_bleed_filter(octave_smoothed_notes, stem_dict, sr=sr)
@@ -234,7 +248,10 @@ class AudioTranscriptionPipeline:
 
         beat_times, instant_bpms, time_sig_str = estimate_beat_grid(drums_y, sr)
         bpm = float(np.median(instant_bpms)) if len(instant_bpms) > 0 else 120.0
-        is_compound = (genre_config and genre_config["features"].get("compound_meter")) or (time_sig_str in ["6/8", "12/8"])
+        
+        is_compound = (
+            genre_config and genre_config.get("features", {}).get("compound_meter", False)
+        ) or (time_sig_str in ["6/8", "12/8"])
 
         grid_aligned_notes = snap_events_to_beat_grid(purged_notes, beat_times, bpm, is_compound=is_compound)
 
@@ -259,7 +276,8 @@ class AudioTranscriptionPipeline:
                 note_item.update_pitch(snapped_p)
                 snapped_layer.append(note_item)
 
-            hmm = ErgonomicFretboardHMMSolver(tuning_type=tuning_type)
+            # Pass genre configuration into the HMM solver
+            hmm = ErgonomicFretboardHMMSolver(tuning_type=tuning_type, genre_config=genre_config)
             fretboard_path, rakes, legatos, slides = hmm.solve(snapped_layer, bpm=bpm)
 
             for idx_n, note_n in enumerate(snapped_layer):
@@ -272,7 +290,6 @@ class AudioTranscriptionPipeline:
 
             expressive_data = {'rakes': rakes, 'legatos': legatos, 'slides': slides}
 
-            # Outputs clean .musicxml file
             build_and_export_score(
                 snapped_layer,
                 fretboard_path,
