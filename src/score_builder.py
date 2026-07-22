@@ -29,7 +29,7 @@ def build_and_export_score(
 ):
     """
     Builds music21 score stream, eliminates temporal drift, handles anacrusis,
-    attaches fingerings/harmonics, and exports formatted MusicXML.
+    attaches fingerings/harmonics, defines Electric Bass MIDI Program 33, and exports MusicXML.
     """
     sec_per_quarter = (60.0 / bpm) if bpm > 0 else 0.5
 
@@ -45,7 +45,11 @@ def build_and_export_score(
 
     m21_score = stream.Score()
     m21_part = stream.Part(id="P1")
-    m21_part.insert(0.0, instrument.ElectricBass())
+
+    # MIDI Instrument Definition: Electric Bass (Program 33)
+    bass_inst = instrument.ElectricBass()
+    bass_inst.midiProgram = 33
+    m21_part.insert(0.0, bass_inst)
 
     m21_score.metadata = metadata.Metadata()
     m21_score.metadata.title = song_title
@@ -187,6 +191,7 @@ def build_and_export_score(
 
     m21_score.append(m21_part)
 
+    # Writes clean .musicxml file
     m21_score.write('musicxml', fp=output_xml_path)
 
     sanitize_and_inject_tablature(

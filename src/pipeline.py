@@ -10,6 +10,7 @@ from note_event import NoteEvent
 from pitch_theory import (
     detect_key_signature,
     snap_pitch_to_scale,
+    filter_octave_jumps,
 )
 from audio_engine import (
     estimate_master_tuning,
@@ -101,7 +102,6 @@ def filter_performance_for_level(
 
     if len(beats) == 0: return list(layer)
 
-    # Index downbeats directly from actual beat_times array anchors to prevent drift
     downbeat_indices = range(0, len(beats), beats_per_measure)
     downbeats = np.array([beats[bi] for bi in downbeat_indices])
 
@@ -226,7 +226,10 @@ class AudioTranscriptionPipeline:
             n.update_pitch(p_clamped)
             corrected_notes.append(n)
 
-        verified_notes = cross_stem_bleed_filter(corrected_notes, stem_dict, sr=sr)
+        # Apply octave jump heuristic filter for sub-bass tracks
+        octave_smoothed_notes = filter_octave_jumps(corrected_notes)
+
+        verified_notes = cross_stem_bleed_filter(octave_smoothed_notes, stem_dict, sr=sr)
         purged_notes = purge_audio_artifacts(verified_notes, bass_audio=bass_y, sr=sr)
 
         beat_times, instant_bpms, time_sig_str = estimate_beat_grid(drums_y, sr)
@@ -268,6 +271,8 @@ class AudioTranscriptionPipeline:
                     note_n.is_rake = rakes[idx_n]
 
             expressive_data = {'rakes': rakes, 'legatos': legatos, 'slides': slides}
+
+            # Outputs clean .musicxml file
             build_and_export_score(
                 snapped_layer,
                 fretboard_path,

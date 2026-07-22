@@ -18,6 +18,33 @@ def fold_pitch_to_bass_range(midi_pitch: int, min_pitch: int = 23, max_pitch: in
     return midi_pitch
 
 
+def filter_octave_jumps(note_events: list, max_jump_semitones: int = 10) -> list:
+    """
+    Post-processing heuristic filter to fix DSP fundamental-frequency tracking errors
+    where sub-bass notes jump back and forth by an octave (+12/-12 semitones).
+    """
+    if len(note_events) < 3:
+        return note_events
+
+    for i in range(1, len(note_events) - 1):
+        prev_p = note_events[i - 1].pitch
+        curr_p = note_events[i].pitch
+        next_p = note_events[i + 1].pitch
+
+        # Check if current note jumps up or down by ~12/24 semitones compared to neighbors
+        diff_prev = curr_p - prev_p
+        diff_next = curr_p - next_p
+
+        if abs(diff_prev - 12) <= 1 and abs(diff_next - 12) <= 1:
+            # Jumped up 1 octave erroneously -> fold down
+            note_events[i].update_pitch(curr_p - 12)
+        elif abs(diff_prev + 12) <= 1 and abs(diff_next + 12) <= 1:
+            # Jumped down 1 octave erroneously -> fold up
+            note_events[i].update_pitch(curr_p + 12)
+
+    return note_events
+
+
 def normalize_key_str(raw_key: str):
     """Normalizes key strings into music21 pitch notation."""
     if not raw_key:
@@ -92,7 +119,6 @@ def detect_key_signature(audio_y, sr, parsed_key=None, bass_filter_fn=None):
                 best_mode = mode_type
 
     try:
-        # Proper music21 modal initialization
         if best_mode in ["major", "minor"]:
             k_str = best_root if best_mode == "major" else best_root.lower()
             return key.Key(k_str), False

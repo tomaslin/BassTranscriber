@@ -12,7 +12,7 @@ class NoteEvent:
     pitches: List[int] = field(default_factory=list)  # Polyphonic pitches (chords, double stops)
     amplitude: float = 1.0  # Normalized RMS audio energy
     bends: Optional[List[float]] = None  # Semitone pitch bends over time
-    microtone_cents: float = 0.0  # Fretless microtonal pitch offset in cents
+    microtone_cents: float = 0.0  # Microtonal pitch offset in cents
     tag: str = "normal"  # "normal", "staccato", "ghost", "slap", "pop", "palm_mute", "let_ring", "harmonic"
     duty_cycle: float = 1.0
     string_idx: Optional[int] = None

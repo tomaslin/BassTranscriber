@@ -176,7 +176,7 @@ def sanitize_and_inject_tablature(
 ):
     """
     Sanitizes MusicXML structure and formats valid dual-staff layout (Standard Notation on Staff 1 + TAB on Staff 2)
-    using proper MusicXML <backup> temporal positioning.
+    using proper MusicXML <backup> temporal positioning and MIDI program definitions.
     """
     try:
         with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -228,6 +228,14 @@ def sanitize_and_inject_tablature(
 
     score_part_elem = root.find(f".//{ns}score-part")
     score_part_id = score_part_elem.attrib.get("id", "P1") if score_part_elem is not None else "P1"
+
+    # Ensure score-part contains valid midi-instrument for Electric Bass (Program 33)
+    if score_part_elem is not None:
+        midi_inst = score_part_elem.find(f"{ns}midi-instrument")
+        if midi_inst is None:
+            midi_inst = ET.SubElement(score_part_elem, f"{ns}midi-instrument", attrib={"id": f"{score_part_id}-I1"})
+        set_or_create(midi_inst, "midi-channel", "1")
+        set_or_create(midi_inst, "midi-program", "33")  # Electric Bass - Finger
 
     first_part = root.find(f"{ns}part")
     if first_part is None:

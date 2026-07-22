@@ -86,7 +86,6 @@ def pyin_predict_notes(audio_y, sr, conf_threshold=0.30, tuning_offset=0.0) -> l
     """Runs pYIN pitch detection calibrated by master tuning offset with polyphonic interval detection."""
     hop_length, frame_length = 512, 4096
     filtered_audio = apply_bass_bandpass(audio_y, sr, lowcut=25.0, highcut=400.0)
-
     filtered_audio = _pad_audio_for_fft(filtered_audio, min_len=frame_length)
 
     f0, _, voiced_probs = librosa.pyin(
@@ -297,7 +296,7 @@ def purge_audio_artifacts(
     purged = []
     curr = valid_notes[0]
 
-    # FIX: Micro-gap merging now strictly checks for IDENTICAL pitches (curr.pitch == next_n.pitch)
+    # Micro-gap merging strictly checks for IDENTICAL pitches
     for next_n in valid_notes[1:]:
         gap = next_n.start - curr.end
 
