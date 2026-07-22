@@ -1,5 +1,5 @@
 import math
-from note_event import NoteEvent
+from models import NoteEvent
 from pitch_theory import fold_pitch_to_bass_range
 
 TUNING_PROFILES = {
@@ -26,6 +26,13 @@ class ErgonomicFretboardHMMSolver:
         self.fret_stretch_penalty = costs.get("fret_stretch_penalty", 20.0)
         self.shift_multiplier = costs.get("position_shift_multiplier", 3.0)
         self.open_bonus = costs.get("open_string_bonus", -2.0)
+
+        # Genre-specific technique flags
+        features = self.genre_config.get("features", {})
+        self.downpicking_pref = features.get("downpicking_preference", False) or self.genre_config.get("downpicking_preference", False)
+        self.is_synth_emulation = features.get("synth_emulation", False) or (self.genre_config.get("technique") == "synth_emulation")
+        if self.is_synth_emulation:
+            self.shift_multiplier *= 0.5  # Encourage wide linear movement for synth basslines
 
     def get_valid_positions(self, midi_pitch: int):
         min_p = min(self.strings.values())
@@ -212,19 +219,33 @@ class ErgonomicFretboardHMMSolver:
         rakes = [False] * T
         legatos = [False] * T
         slides = [False] * T
-        for i in range(1, T):
-            onset_dt = note_events[i].start - note_events[i-1].start
-            p_string, p_fret = optimal_states_full[i-1][0], optimal_states_full[i-1][1]
-            c_string, c_fret = optimal_states_full[i][0], optimal_states_full[i][1]
+        for i in range(T):
+            local_anc = self._get_local_anchor_fret(note_events, i)
+            c_pos = optimal_positions[i]
+            note_events[i].fret_position = c_pos
+            note_events[i].anchor_fret = int(round(local_anc))
+            note_events[i].anchor_pattern = f"Box-Fret-{int(round(local_anc))}" if local_anc > 0 else "Open-Box"
+            note_events[i].is_anchor = (c_pos[1] == 0 or abs(c_pos[1] - local_anc) <= 2)
 
-            if (c_string - p_string) == 1 and onset_dt < 0.12:
-                rakes[i] = True
+            # Assign downpicking mark if requested by genre features
+            if self.downpicking_pref and note_events[i].duration <= 0.35 and note_events[i].tag not in ["slap", "pop"]:
+                note_events[i].is_downpick = True
 
-            if c_string == p_string and p_fret > 0 and c_fret > 0 and p_fret != c_fret:
-                fret_diff = abs(c_fret - p_fret)
-                if fret_diff in [1, 2, 3] and onset_dt < 0.08:
-                    legatos[i] = True
-                elif fret_diff >= 3 and onset_dt < 0.18:
-                    slides[i] = True
+            note_events[i].determine_category()
+
+            if i > 0:
+                onset_dt = note_events[i].start - note_events[i-1].start
+                p_string, p_fret = optimal_states_full[i-1][0], optimal_states_full[i-1][1]
+                c_string, c_fret = optimal_states_full[i][0], optimal_states_full[i][1]
+
+                if (c_string - p_string) == 1 and onset_dt < 0.12:
+                    rakes[i] = True
+
+                if c_string == p_string and p_fret > 0 and c_fret > 0 and p_fret != c_fret:
+                    fret_diff = abs(c_fret - p_fret)
+                    if fret_diff in [1, 2, 3] and onset_dt < 0.08:
+                        legatos[i] = True
+                    elif fret_diff >= 3 and onset_dt < 0.18:
+                        slides[i] = True
 
         return optimal_positions, rakes, legatos, slides

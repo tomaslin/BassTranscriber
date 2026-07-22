@@ -82,9 +82,9 @@ def idiomatic_rhythm_snap(dur_q, level=5, is_compound=False):
     """
     if isinstance(dur_q, (float, int)):
         dur_q = round(float(dur_q), 4)
-    
+
     dur_q = fractions.Fraction(dur_q).limit_denominator(12 if is_compound else 32)
-    
+
     MIN_DURATION = fractions.Fraction(1, 16) if level <= 3 else fractions.Fraction(1, 32)
     if dur_q < MIN_DURATION:
         return MIN_DURATION
@@ -144,7 +144,7 @@ def decompose_duration_engraver_rules(dur_q, curr_m_fill, measure_capacity, is_c
     dur_q = fractions.Fraction(dur_q).limit_denominator(32)
     curr_m_fill = fractions.Fraction(curr_m_fill).limit_denominator(32)
     measure_capacity = fractions.Fraction(measure_capacity).limit_denominator(32)
-    
+
     allowed_values = [
         fractions.Fraction(4, 1),
         fractions.Fraction(3, 1),
@@ -164,27 +164,27 @@ def decompose_duration_engraver_rules(dur_q, curr_m_fill, measure_capacity, is_c
         fractions.Fraction(1, 16),
         fractions.Fraction(1, 32),
     ]
-    
+
     chunks = []
     while dur_q > 0:
         rem_in_m = measure_capacity - curr_m_fill
         if rem_in_m <= 0:
             curr_m_fill = fractions.Fraction(0, 1)
             rem_in_m = measure_capacity
-            
+
         best_val = None
         for val in allowed_values:
             if val <= dur_q and val <= rem_in_m:
                 best_val = val
                 break
-        
+
         if best_val is None:
             if dur_q >= fractions.Fraction(1, 64):
                 best_val = min(fractions.Fraction(1, 32), rem_in_m)
                 dur_q = fractions.Fraction(0, 1)
             else:
                 break
-                
+
         chunks.append(best_val)
         dur_q -= best_val
         curr_m_fill += best_val
@@ -321,13 +321,7 @@ def sanitize_and_inject_tablature(
             reorder_children(attrs, ATTRS_SCHEMA_ORDER, ns)
 
     note_evt_idx = 0
-    active_spanner_tag = None
-    in_legato = False
-    in_slide = False
-    current_fifths = 0
     current_divisions = 1
-
-    last_note_elem = None
 
     for part in root.findall(f"{ns}part"):
         part.attrib["id"] = score_part_id
@@ -340,202 +334,21 @@ def sanitize_and_inject_tablature(
                         current_divisions = int(divs_elem.text)
                     except ValueError:
                         pass
-                key_elem = attrs.find(f"{ns}key")
-                if key_elem is not None:
-                    fifths_elem = key_elem.find(f"{ns}fifths")
-                    if fifths_elem is not None and fifths_elem.text:
-                        current_fifths = int(fifths_elem.text)
 
-            for old_b in measure.findall(f"{ns}backup"):
-                measure.remove(old_b)
+            notes_in_m = list(measure.findall(f"{ns}note"))
+            for note in notes_in_m:
+                ensure_note_type(note, current_divisions, ns)
+                if note.find(f"{ns}pitch") is not None:
+                    set_or_create(note, "staff", "1")
+                    if snapped_layer and note_evt_idx < len(snapped_layer):
+                        note_evt = snapped_layer[note_evt_idx]
+                        if note.find(f"{ns}chord") is None:
+                            if note_evt.category and note_evt.category != "melodic":
+                                add_direction_words(measure, f"[{note_evt.category.upper()}]")
+                            if note_evt.anchor_pattern and note_evt.is_anchor:
+                                add_direction_words(measure, f"Anchor: {note_evt.anchor_pattern}")
+                            note_evt_idx += 1
 
-            m_children = list(measure)
-            staff1_duration = 0
-            tab_elements = []
-            current_evt = None
-
-            for elem in m_children:
-                if elem.tag == f"{ns}note":
-                    ensure_note_type(elem, current_divisions, ns)
-                    is_rest = elem.find(f"{ns}rest") is not None
-                    is_chord = elem.find(f"{ns}chord") is not None
-                    
-                    is_tie_stop = (
-                        elem.find(f"{ns}tie[@type='stop']") is not None or
-                        elem.find(f"{ns}notations/tied[@type='stop']") is not None
-                    ) and (
-                        elem.find(f"{ns}tie[@type='start']") is None and
-                        elem.find(f"{ns}notations/tied[@type='start']") is None
-                    )
-
-                    set_or_create(elem, "staff", "1")
-                    set_or_create(elem, "voice", "1")
-
-                    if not is_rest:
-                        pitch_elem = elem.find(f"{ns}pitch")
-                        if pitch_elem is not None:
-                            step_val = pitch_elem.findtext(f"{ns}step") or "D"
-                            try:
-                                oct_val = int(pitch_elem.findtext(f"{ns}octave") or "3")
-                            except ValueError:
-                                oct_val = 3
-
-                            if oct_val < 3 or (oct_val == 3 and step_val == "C"):
-                                set_or_create(elem, "stem", "up")
-                            else:
-                                set_or_create(elem, "stem", "down")
-
-                            alter_elem = pitch_elem.find(f"{ns}alter")
-                            acc_map = KEY_ACCIDENTALS.get(current_fifths, {})
-                            if alter_elem is None and step_val in acc_map:
-                                alt_val, acc_type = acc_map[step_val]
-                                set_or_create(pitch_elem, "alter", alt_val)
-                                set_or_create(elem, "accidental", acc_type)
-                            elif alter_elem is not None and alter_elem.text:
-                                alt_val = alter_elem.text
-                                acc_type = "sharp" if alt_val == "1" else ("flat" if alt_val == "-1" else "natural")
-                                set_or_create(elem, "accidental", acc_type)
-
-                        if not is_chord and not is_tie_stop:
-                            if snapped_layer and note_evt_idx < len(snapped_layer):
-                                current_evt = snapped_layer[note_evt_idx]
-                                note_evt_idx += 1
-                            else:
-                                current_evt = None
-
-                        evt = current_evt
-
-                        if evt is not None:
-                            notations = elem.find(f"{ns}notations") or ET.SubElement(elem, f"{ns}notations")
-                            technical = notations.find(f"{ns}technical") or ET.SubElement(notations, f"{ns}technical")
-
-                            string_elem = technical.find(f"{ns}string")
-                            fret_elem = technical.find(f"{ns}fret")
-                            string_val = string_elem.text if string_elem is not None else getattr(evt, 'string_idx', None)
-                            try:
-                                fret_val = int(fret_elem.text) if fret_elem is not None and fret_elem.text else getattr(evt, 'fret_val', None)
-                            except ValueError:
-                                fret_val = getattr(evt, 'fret_val', None)
-
-                            if evt.tag == "slap" and technical.find(f"{ns}slap") is None:
-                                ET.SubElement(technical, f"{ns}slap")
-                            elif evt.tag == "pop" and technical.find(f"{ns}pop") is None:
-                                ET.SubElement(technical, f"{ns}pop")
-
-                            if evt.tag in ["palm_mute", "let_ring"]:
-                                if active_spanner_tag != evt.tag:
-                                    if active_spanner_tag is not None:
-                                        ET.SubElement(notations, f"{ns}dashes", attrib={"type": "stop", "number": "1"})
-                                    active_spanner_tag = evt.tag
-                                    ET.SubElement(notations, f"{ns}dashes", attrib={"type": "start", "number": "1"})
-                                    add_direction_words(measure, "P.M." if evt.tag == "palm_mute" else "let ring")
-                            else:
-                                if active_spanner_tag is not None:
-                                    ET.SubElement(notations, f"{ns}dashes", attrib={"type": "stop", "number": "1"})
-                                    active_spanner_tag = None
-
-                            if evt.tag == "ghost":
-                                set_or_create(elem, "notehead", "x")
-
-                            is_evt_legato = getattr(evt, 'is_legato', False)
-                            if in_legato and not is_evt_legato:
-                                ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "stop", "number": "1"})
-                                ET.SubElement(notations, f"{ns}slur", attrib={"type": "stop", "number": "1"})
-                                in_legato = False
-                            elif is_evt_legato and not in_legato:
-                                ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "start", "number": "1"}).text = "H"
-                                ET.SubElement(notations, f"{ns}slur", attrib={"type": "start", "number": "1"})
-                                in_legato = True
-
-                            is_evt_slide = getattr(evt, 'is_slide', False)
-                            if in_slide and not is_evt_slide:
-                                ET.SubElement(notations, f"{ns}slide", attrib={"type": "stop", "number": "1"})
-                                in_slide = False
-                            elif is_evt_slide and not in_slide:
-                                ET.SubElement(notations, f"{ns}slide", attrib={"type": "start", "number": "1"}).text = "sl."
-                                in_slide = True
-
-                            positive_bends = [b for b in (getattr(evt, 'bends', []) or []) if b > 0.05]
-                            if fret_val is not None and fret_val > 0 and positive_bends:
-                                bend_elem = ET.SubElement(technical, f"{ns}bend")
-                                ET.SubElement(bend_elem, f"{ns}bend-alter").text = str(round(max(positive_bends), 1))
-                            elif fret_val is not None and fret_val > 0 and getattr(evt, 'microtone_cents', 0) > 10.0:
-                                bend_elem = ET.SubElement(technical, f"{ns}bend")
-                                ET.SubElement(bend_elem, f"{ns}bend-alter").text = str(round(evt.microtone_cents / 100.0, 2))
-
-                            if string_elem is not None: technical.remove(string_elem)
-                            if fret_elem is not None: technical.remove(fret_elem)
-                            if len(technical) == 0: notations.remove(technical)
-                            if len(notations) == 0: elem.remove(notations)
-
-                            last_note_elem = elem
-
-                        tab_note = ET.fromstring(ET.tostring(elem))
-                        set_or_create(tab_note, "staff", "2")
-                        set_or_create(tab_note, "voice", "1")
-
-                        tab_notations = tab_note.find(f"{ns}notations") or ET.SubElement(tab_note, f"{ns}notations")
-                        tab_tech = tab_notations.find(f"{ns}technical") or ET.SubElement(tab_notations, f"{ns}technical")
-
-                        if tab_tech.find(f"{ns}string") is None and string_val is not None:
-                            ET.SubElement(tab_tech, f"{ns}string").text = str(string_val)
-                        if tab_tech.find(f"{ns}fret") is None and fret_val is not None:
-                            ET.SubElement(tab_tech, f"{ns}fret").text = str(fret_val)
-
-                        tab_accidental = tab_note.find(f"{ns}accidental")
-                        if tab_accidental is not None:
-                            tab_note.remove(tab_accidental)
-
-                        reorder_children(elem, NOTE_SCHEMA_ORDER, ns)
-                        reorder_children(tab_note, NOTE_SCHEMA_ORDER, ns)
-
-                        tab_elements.append(tab_note)
-
-                    else:
-                        set_or_create(elem, "staff", "1")
-                        set_or_create(elem, "voice", "1")
-                        reorder_children(elem, NOTE_SCHEMA_ORDER, ns)
-
-                        tab_rest = ET.fromstring(ET.tostring(elem))
-                        set_or_create(tab_rest, "staff", "2")
-                        set_or_create(tab_rest, "voice", "1")
-                        reorder_children(tab_rest, NOTE_SCHEMA_ORDER, ns)
-
-                        tab_elements.append(tab_rest)
-
-                    dur_text = elem.findtext(f"{ns}duration")
-                    if not is_chord and dur_text:
-                        staff1_duration += int(dur_text)
-
-            if staff1_duration > 0 and tab_elements:
-                backup_elem = ET.Element(f"{ns}backup")
-                ET.SubElement(backup_elem, f"{ns}duration").text = str(staff1_duration)
-                measure.append(backup_elem)
-                for tab_elem in tab_elements:
-                    measure.append(tab_elem)
-
-    if last_note_elem is not None:
-        notations = last_note_elem.find(f"{ns}notations") or ET.SubElement(last_note_elem, f"{ns}notations")
-        technical = notations.find(f"{ns}technical") or ET.SubElement(notations, f"{ns}technical")
-
-        if active_spanner_tag is not None:
-            ET.SubElement(notations, f"{ns}dashes", attrib={"type": "stop", "number": "1"})
-            active_spanner_tag = None
-
-        if in_legato:
-            ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "stop", "number": "1"})
-            ET.SubElement(notations, f"{ns}slur", attrib={"type": "stop", "number": "1"})
-            in_legato = False
-
-        if in_slide:
-            ET.SubElement(notations, f"{ns}slide", attrib={"type": "stop", "number": "1"})
-            in_slide = False
-
-        reorder_children(last_note_elem, NOTE_SCHEMA_ORDER, ns)
-
-    if ns:
-        ET.register_namespace('', ns.strip('{}'))
-    if hasattr(ET, 'indent'):
-        ET.indent(tree, space="  ")
+                reorder_children(note, NOTE_SCHEMA_ORDER, ns)
 
     tree.write(xml_path, encoding='utf-8', xml_declaration=True)

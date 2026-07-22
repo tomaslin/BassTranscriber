@@ -1,0 +1,222 @@
+{
+  "latin_clave_syncopated": {
+    "tuning": "4_string_standard",
+    "technique": "fingerstyle",
+    "rhythmic_grid": "clave_based",
+    "rhythmic_anchor": {
+      "pattern": "clave_tumbao",
+      "lock_strength": "strict"
+    },
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "caribbean_afro_groove": {
+    "tuning": "4_string_standard",
+    "technique": "thumb_mute",
+    "rhythmic_grid": "laid_back_straight",
+    "rhythmic_anchor": {
+      "pattern": "one_drop_skank",
+      "lock_strength": "moderate"
+    },
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 25.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -3.5
+    }
+  },
+  "funk_disco_slap": {
+    "tuning": "4_string_standard",
+    "technique": "slap_pop",
+    "rhythmic_grid": "16th_syncopated",
+    "rhythmic_anchor": {
+      "pattern": "downbeat_one",
+      "lock_strength": "moderate"
+    },
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 0.0,
+      "slap_non_bass_penalty": 0.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -1.0
+    }
+  },
+  "soul_rnb_gospel": {
+    "tuning": "4_string_standard",
+    "technique": "fingerstyle",
+    "rhythmic_grid": "swung_16th",
+    "rhythmic_anchor": {
+      "pattern": "downbeat_one",
+      "lock_strength": "elastic"
+    },
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "jazz_swing_acoustic": {
+    "tuning": "4_string_standard",
+    "technique": "upright_sim",
+    "rhythmic_grid": "triplet_swing",
+    "rhythmic_anchor": {
+      "pattern": "walking_quarter",
+      "lock_strength": "strict"
+    },
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": false,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 10.0,
+      "position_shift_multiplier": 2.0,
+      "open_string_bonus": -1.5
+    }
+  },
+  "blues_roots_country": {
+    "tuning": "4_string_standard",
+    "technique": "fingerstyle",
+    "rhythmic_grid": "shuffle_triplet",
+    "rhythmic_anchor": {
+      "pattern": "kick_lock",
+      "lock_strength": "moderate"
+    },
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": false,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 15.0,
+      "position_shift_multiplier": 2.5,
+      "open_string_bonus": -2.0
+    }
+  },
+  "rock_punk_alternative": {
+    "tuning": "4_string_standard",
+    "technique": "plectrum",
+    "rhythmic_grid": "straight_8th",
+    "rhythmic_anchor": {
+      "pattern": "kick_lock",
+      "lock_strength": "strict"
+    },
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": false,
+      "downpicking_preference": true,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 25.0,
+      "position_shift_multiplier": 3.5,
+      "open_string_bonus": -3.0
+    }
+  },
+  "metal_extreme": {
+    "tuning": "5_string_standard",
+    "technique": "plectrum",
+    "rhythmic_grid": "straight_16th",
+    "rhythmic_anchor": {
+      "pattern": "kick_lock",
+      "lock_strength": "strict"
+    },
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": true,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 30.0,
+      "slap_non_bass_penalty": 20.0,
+      "fret_stretch_penalty": 30.0,
+      "position_shift_multiplier": 4.0,
+      "open_string_bonus": -4.0
+    }
+  },
+  "prog_math_complex": {
+    "tuning": "4_string_standard",
+    "technique": "fingerstyle",
+    "rhythmic_grid": "polyrhythmic",
+    "rhythmic_anchor": {
+      "pattern": "freestyle_syncopated",
+      "lock_strength": "decoupled"
+    },
+    "features": {
+      "ghost_notes": true,
+      "compound_meter": true,
+      "downpicking_preference": false,
+      "synth_emulation": false
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.5
+    }
+  },
+  "four_on_floor_dance": {
+    "tuning": "4_string_standard",
+    "technique": "synth_emulation",
+    "rhythmic_grid": "quantized_straight",
+    "rhythmic_anchor": {
+      "pattern": "kick_lock",
+      "lock_strength": "strict"
+    },
+    "features": {
+      "ghost_notes": false,
+      "compound_meter": false,
+      "downpicking_preference": false,
+      "synth_emulation": true
+    },
+    "costs": {
+      "pop_non_treble_penalty": 25.0,
+      "slap_non_bass_penalty": 18.0,
+      "fret_stretch_penalty": 20.0,
+      "position_shift_multiplier": 3.0,
+      "open_string_bonus": -2.0
+    }
+  }
+}

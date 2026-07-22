@@ -3,7 +3,7 @@ import librosa
 from scipy.ndimage import median_filter
 from scipy.signal import butter, sosfiltfilt
 
-from note_event import NoteEvent
+from models import NoteEvent
 
 
 def _pad_audio_for_fft(y, min_len=2048):
@@ -106,6 +106,7 @@ def collapse_gestures(notes: list[NoteEvent], max_gesture_duration=0.16) -> list
                     next_n.tag = "hammer_on" if pitch_delta > 0 else "pull_off"
                 else:
                     next_n.tag = "slide"
+                next_n.category = "expressive"
                 i += 1
                 continue
 
@@ -189,14 +190,16 @@ def detect_polyphonic_harmonies(audio_y, sr, note_event: NoteEvent, hop_length=5
     return [note_event.pitch]
 
 
-def pyin_predict_notes(audio_y, sr, conf_threshold=0.30, tuning_offset=0.0) -> list[NoteEvent]:
-    """Runs pYIN pitch detection calibrated by master tuning offset with smoothed filtering."""
+def pyin_predict_notes(
+    audio_y, sr, conf_threshold=0.30, tuning_offset=0.0, fmin=25.0, fmax=450.0
+) -> list[NoteEvent]:
+    """Runs pYIN pitch detection calibrated by master tuning offset with smoothed filtering and dynamic fmin bounds."""
     hop_length, frame_length = 512, 4096
-    filtered_audio = apply_bass_bandpass(audio_y, sr, lowcut=25.0, highcut=400.0)
+    filtered_audio = apply_bass_bandpass(audio_y, sr, lowcut=max(15.0, fmin), highcut=fmax)
     filtered_audio = _pad_audio_for_fft(filtered_audio, min_len=frame_length)
 
     f0, _, voiced_probs = librosa.pyin(
-        filtered_audio, fmin=25.0, fmax=450.0, sr=sr, frame_length=frame_length, hop_length=hop_length
+        filtered_audio, fmin=fmin, fmax=fmax, sr=sr, frame_length=frame_length, hop_length=hop_length
     )
 
     f0 = np.nan_to_num(f0)
@@ -244,7 +247,7 @@ def pyin_predict_notes(audio_y, sr, conf_threshold=0.30, tuning_offset=0.0) -> l
             microtone_cents=microtone_cents,
             tag=tag,
         )
-
+        ne.determine_category()
         ne.pitches = detect_polyphonic_harmonies(audio_y, sr, ne, hop_length=hop_length)
         raw_notes.append(ne)
 
@@ -387,6 +390,10 @@ def purge_audio_artifacts(
                 tag=tag,
                 duty_cycle=n.duty_cycle,
                 is_harmonic=(tag == "harmonic"),
+                category=n.category,
+                anchor_pattern=n.anchor_pattern,
+                anchor_fret=n.anchor_fret,
+                is_anchor=n.is_anchor,
             )
         )
 
@@ -465,11 +472,18 @@ def estimate_beat_grid(drums_y, sr):
 
 
 def snap_events_to_beat_grid(
-    raw_notes: list[NoteEvent], beat_times, bpm, is_compound=False, subdivisions=4
+    raw_notes: list[NoteEvent], beat_times, bpm, is_compound=False, subdivisions=4, genre_config=None
 ) -> list[NoteEvent]:
-    """Aligns notes relative to beat anchors using Onset-to-Onset duration snapping."""
+    """Aligns notes relative to beat anchors using Onset-to-Onset duration snapping with genre-aware grid rules."""
     if not raw_notes:
         return []
+
+    features = genre_config.get("features", {}) if genre_config else {}
+    rhythmic_grid = genre_config.get("rhythmic_grid", "") if genre_config else ""
+    rhythmic_anchor = genre_config.get("rhythmic_anchor", {}) if genre_config else {}
+    anchor_pattern = rhythmic_anchor.get("pattern", [])
+
+    is_quantized_straight = (rhythmic_grid == "quantized_straight") or features.get("synth_emulation", False)
 
     grid_notes = []
     avg_amp = float(np.mean([n.amplitude for n in raw_notes])) if raw_notes else 0.5
@@ -496,7 +510,7 @@ def snap_events_to_beat_grid(
         err_binary = abs(rel_t - round(rel_t / subdiv_sec_binary) * subdiv_sec_binary)
         err_triplet = abs(rel_t - round(rel_t / subdiv_sec_triplet) * subdiv_sec_triplet)
 
-        use_triplet = (err_triplet < (err_binary * 0.55)) and not is_compound
+        use_triplet = (err_triplet < (err_binary * 0.55)) and not is_compound and not is_quantized_straight
         subdiv_sec = subdiv_sec_triplet if use_triplet else subdiv_sec_binary
 
         snapped = ref_beat + (round(rel_t / subdiv_sec) * subdiv_sec)
@@ -538,6 +552,25 @@ def snap_events_to_beat_grid(
         is_accent = note.amplitude > (avg_amp * 1.45)
         tag_out = "staccato" if is_staccato else note.tag
 
+        is_downbeat = (i == 0) or (is_pickup) or (abs(snapped_s - first_downbeat) < 0.05) or (sec_per_beat > 0 and abs((snapped_s - first_downbeat) % sec_per_beat) < 0.05)
+
+        is_pattern_anchor = False
+        if anchor_pattern and len(anchor_pattern) > 0:
+            rel_beat_pos = ((snapped_s - first_downbeat) / sec_per_beat) % 4.0
+            is_pattern_anchor = any(abs(rel_beat_pos - pat_pos) < 0.125 for pat_pos in anchor_pattern)
+
+        is_anchor_evt = is_downbeat or is_accent or is_pattern_anchor
+        anchor_pat = "downbeat_anchor" if is_downbeat else ("pattern_anchor" if is_pattern_anchor else ("beat_anchor" if is_anchor_evt else "subdivision"))
+
+        if tag_out in ["ghost", "palm_mute", "slap", "pop", "staccato"]:
+            cat = "percussive"
+        elif tag_out in ["hammer_on", "pull_off", "slide"] or note.is_harmonic or len(note.bends or []) > 0:
+            cat = "expressive"
+        elif is_downbeat or is_pattern_anchor:
+            cat = "groove_anchor"
+        else:
+            cat = "melodic"
+
         grid_notes.append(
             NoteEvent(
                 start=snapped_s,
@@ -555,6 +588,9 @@ def snap_events_to_beat_grid(
                 is_pickup=is_pickup,
                 is_harmonic=note.is_harmonic,
                 slide_from=note.slide_from,
+                category=cat,
+                anchor_pattern=anchor_pat,
+                is_anchor=is_anchor_evt,
             )
         )
 
@@ -570,6 +606,7 @@ def apply_lossy_abstraction(
     abstraction_level: int = 3,
     is_compound: bool = False,
     stem_dict: dict = None,
+    genre_config: dict = None,
 ) -> list[NoteEvent]:
     """Applies multi-level lossy abstraction pipeline based on requested complexity mode (Levels 1 to 5)."""
     if not raw_notes:
@@ -591,7 +628,7 @@ def apply_lossy_abstraction(
 
     subdivs = 2 if abstraction_level == 1 else 4
     grid_notes = snap_events_to_beat_grid(
-        purged, beat_times=beat_times, bpm=bpm, is_compound=is_compound, subdivisions=subdivs
+        purged, beat_times=beat_times, bpm=bpm, is_compound=is_compound, subdivisions=subdivs, genre_config=genre_config
     )
 
     if abstraction_level <= 4:
@@ -612,13 +649,17 @@ def transcribe_audio(
     drums_y=None,
     stem_dict=None,
     abstraction_level: int = 3,
+    genre_config=None,
 ) -> tuple[list[NoteEvent], float, str]:
     """
     High-level entry point function that runs the complete audio processing pipeline:
     Tuning Estimation -> Pitch Detection -> Beat Grid -> Lossy Abstraction.
     """
+    tuning_type = genre_config.get("tuning", "4_string_standard") if genre_config else "4_string_standard"
+    fmin_hz = 18.0 if ("5_string" in tuning_type or "6_string" in tuning_type or "drop" in tuning_type) else 25.0
+
     tuning_offset = estimate_master_tuning(bass_y, sr)
-    raw_notes = pyin_predict_notes(bass_y, sr, tuning_offset=tuning_offset)
+    raw_notes = pyin_predict_notes(bass_y, sr, conf_threshold=0.30, tuning_offset=tuning_offset, fmin=fmin_hz)
 
     drums_signal = drums_y if drums_y is not None else bass_y
     beat_times, bpms, time_sig = estimate_beat_grid(drums_signal, sr)
@@ -634,6 +675,7 @@ def transcribe_audio(
         abstraction_level=abstraction_level,
         is_compound=is_compound,
         stem_dict=stem_dict,
+        genre_config=genre_config,
     )
 
     return final_notes, avg_bpm, time_sig

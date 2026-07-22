@@ -1,0 +1,42 @@
+{
+  "clave_tumbao": {
+    "description": "Anticipates beat 1 on the 4& tied into the 1, locked with 2-3 or 3-2 Clave",
+    "accents": [0.0, 2.5, 3.5],
+    "subdivision": "16th"
+  },
+  "martillo_accent": {
+    "description": "Anchors the 4th beat pop/accent of the bongó and güira rhythm",
+    "accents": [0.0, 1.0, 2.0, 3.0, 3.5],
+    "subdivision": "16th"
+  },
+  "tresillo_dembow": {
+    "description": "3+3+2 dotted-eighth pulse pattern common across Caribbean/Afro genres",
+    "accents": [0.0, 1.5, 3.0],
+    "subdivision": "16th"
+  },
+  "downbeat_one": {
+    "description": "Heavy emphasis on Beat 1 ('The One') with percussive syncopation on offbeats",
+    "accents": [0.0],
+    "subdivision": "16th"
+  },
+  "kick_lock": {
+    "description": "Mirrors or locks tightly to the primary kick drum transient pattern",
+    "accents": [0.0, 1.0, 2.0, 3.0],
+    "subdivision": "8th"
+  },
+  "walking_quarter": {
+    "description": "Continuous quarter-note pulse walking through harmonic chord changes",
+    "accents": [0.0, 1.0, 2.0, 3.0],
+    "subdivision": "quarter"
+  },
+  "one_drop_skank": {
+    "description": "Omits beat 1, anchoring heavily on beat 3 with offbeat skanks",
+    "accents": [2.0],
+    "subdivision": "8th"
+  },
+  "freestyle_syncopated": {
+    "description": "Fluid counterpoint and dynamic rhythmic anchors without a fixed pattern",
+    "accents": [],
+    "subdivision": "16th"
+  }
+}

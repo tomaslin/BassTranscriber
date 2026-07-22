@@ -23,6 +23,18 @@ class NoteEvent:
     fret_position: Optional[Tuple[int, int, int]] = None
     is_downpick: bool = False
 
+    # Category and Anchor Pattern Encoding Attributes
+    category: str = "melodic"  # groove_anchor, percussive, expressive, melodic
+    anchor_pattern: Optional[str] = None  # e.g., downbeat_anchor, Box-Fret-5
+    anchor_fret: Optional[int] = None
+    is_anchor: bool = False
+
+    def __post_init__(self):
+        if not self.pitches:
+            self.pitches = [self.pitch]
+        if self.category == "melodic":
+            self.determine_category()
+
     @property
     def duration(self) -> float:
         return max(0.0, self.end - self.start)
@@ -31,7 +43,20 @@ class NoteEvent:
         self.pitch = new_pitch
         self.pitches = [new_pitch]
 
+    def determine_category(self) -> str:
+        """Categorizes note events based on performance tags, dynamics, and structural anchor attributes."""
+        if self.tag in ["ghost", "slap", "pop", "palm_mute", "staccato"]:
+            self.category = "percussive"
+        elif self.tag in ["hammer_on", "pull_off", "slide"] or self.is_harmonic or len(self.bends) > 0 or abs(self.microtone_cents) > 10.0:
+            self.category = "expressive"
+        elif self.is_anchor or self.is_pickup or self.is_accent:
+            self.category = "groove_anchor"
+        else:
+            self.category = "melodic"
+        return self.category
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d['duration'] = self.duration
+        d['category'] = self.determine_category()
         return d

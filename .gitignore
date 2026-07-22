@@ -3,4 +3,4 @@ stems_*
 *.mp3
 .bass_pipeline_env
 output_bass
-src/__pycache__
+**/__pycache__

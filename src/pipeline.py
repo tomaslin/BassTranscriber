@@ -2,62 +2,125 @@ import os
 import re
 import json
 import difflib
+from copy import deepcopy
 import numpy as np
-import scipy.signal as signal
-import librosa
 
-from note_event import NoteEvent
-from pitch_theory import (
-    detect_key_signature,
-    snap_pitch_to_scale,
-    filter_octave_jumps,
-)
-from audio_engine import (
-    estimate_master_tuning,
-    apply_bass_bandpass,
-    pyin_predict_notes,
-    cross_stem_bleed_filter,
-    purge_audio_artifacts,
-    estimate_beat_grid,
-    snap_events_to_beat_grid,
-)
+from models import NoteEvent, Genre, Level
+from pitch_theory import snap_pitch_to_scale
+from transcriber import stems_to_note_events
 from fretboard_hmm import ErgonomicFretboardHMMSolver
 from score_builder import build_and_export_score
 
 
 def load_genre_configs(config_path=None):
-    """Loads genre configurations dynamically from a JSON file."""
+    """Loads genre, category, and pattern configurations dynamically."""
     if not config_path:
-        config_path = os.path.join(os.path.dirname(__file__), "..", "config", "genres.json")
+        config_dir = os.path.join(os.path.dirname(__file__), "..", "config")
+        genres_path = os.path.join(config_dir, "genres.json")
+    else:
+        if os.path.isdir(config_path):
+            config_dir = config_path
+            genres_path = os.path.join(config_dir, "genres.json")
+        else:
+            config_dir = os.path.dirname(config_path)
+            genres_path = config_path
 
-    if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    categories_path = os.path.join(config_dir, "categories.json")
+    patterns_path = os.path.join(config_dir, "patterns.json")
+
+    genres = {}
+    if os.path.exists(genres_path):
+        with open(genres_path, "r", encoding="utf-8") as f:
+            genres = json.load(f)
+            # Handle if the input was still a unified file containing 'genres' key
+            if isinstance(genres, dict) and "genres" in genres:
+                categories_fb = genres.get("categories", {})
+                patterns_fb = genres.get("patterns", {})
+                genres = genres["genres"]
+                return {
+                    "genres": genres,
+                    "categories": categories_fb,
+                    "patterns": patterns_fb
+                }
+
+    categories = {}
+    if os.path.exists(categories_path):
+        with open(categories_path, "r", encoding="utf-8") as f:
+            categories = json.load(f)
+
+    patterns = {}
+    if os.path.exists(patterns_path):
+        with open(patterns_path, "r", encoding="utf-8") as f:
+            patterns = json.load(f)
+
+    return {
+        "genres": genres,
+        "categories": categories,
+        "patterns": patterns
+    }
 
 
 def resolve_genre(raw_genre, genre_configs=None):
-    """Resolves genre string against dynamically loaded JSON configs."""
+    """Resolves genre string against dynamically loaded JSON configs with full recursive inheritance support."""
     if genre_configs is None:
         genre_configs = load_genre_configs()
 
+    # Unwrap dictionaries
+    genres_dict = genre_configs.get("genres", {})
+    categories_dict = genre_configs.get("categories", {})
+    patterns_dict = genre_configs.get("patterns", {})
+
+    # Match genre key
     if not raw_genre:
-        default_cfg = genre_configs.get("default", {})
-        return "default", default_cfg
+        matched_key = "default"
+    else:
+        clean = raw_genre.strip().lower()
+        matched_key = None
+        if clean in genres_dict:
+            matched_key = clean
+        else:
+            for g in genres_dict:
+                if g in clean or clean in g:
+                    matched_key = g
+                    break
+            if not matched_key:
+                valid_keys = list(genres_dict.keys())
+                matches = difflib.get_close_matches(clean, valid_keys, n=1, cutoff=0.3)
+                matched_key = matches[0] if matches else "default"
 
-    clean = raw_genre.strip().lower()
-    if clean in genre_configs:
-        return clean, genre_configs[clean]
+    raw_cfg = genres_dict.get(matched_key, genres_dict.get("default", {}))
 
-    for g in genre_configs:
-        if g in clean or clean in g:
-            return g, genre_configs[g]
+    def merge_configs(parent, child):
+        res = deepcopy(parent)
+        for k, v in child.items():
+            if isinstance(v, dict) and k in res and isinstance(res[k], dict):
+                res[k] = merge_configs(res[k], v)
+            else:
+                res[k] = deepcopy(v)
+        return res
 
-    matches = difflib.get_close_matches(clean, genre_configs.keys(), n=1, cutoff=0.3)
-    if matches:
-        return matches[0], genre_configs[matches[0]]
+    def resolve_inheritance(cfg):
+        if isinstance(cfg, dict) and "extends" in cfg:
+            parent_key = cfg["extends"]
+            parent_cfg = categories_dict.get(parent_key, genres_dict.get(parent_key, {}))
+            if parent_cfg:
+                resolved_parent = resolve_inheritance(parent_cfg)
+                return merge_configs(resolved_parent, cfg)
+        return deepcopy(cfg)
 
-    return "default", genre_configs.get("default", {})
+    resolved_cfg = resolve_inheritance(raw_cfg)
+
+    # Automatically resolve the pattern string in "rhythmic_anchor" if present
+    if isinstance(resolved_cfg, dict) and "rhythmic_anchor" in resolved_cfg:
+        anchor = resolved_cfg["rhythmic_anchor"]
+        if isinstance(anchor, dict) and "pattern" in anchor:
+            pat_name = anchor["pattern"]
+            if isinstance(pat_name, str) and pat_name in patterns_dict:
+                anchor["pattern_name"] = pat_name
+                anchor["pattern"] = patterns_dict[pat_name].get("accents", [])
+
+    genre_obj = Genre.from_dict(matched_key, resolved_cfg)
+    return matched_key, genre_obj
 
 
 def parse_metadata_from_path(folder_path, custom_genre=None, config_path=None):
@@ -103,10 +166,16 @@ def get_closest_value(target, array):
 
 
 def filter_performance_for_level(
-    layer: list[NoteEvent], level: int, beats, is_compound: bool, bpm: float, genre_config=None
+    layer: list[NoteEvent], level: int | Level, beats, is_compound: bool, bpm: float, genre_config=None
 ) -> list[NoteEvent]:
     if not layer: return []
-    if level == 5: return list(layer)
+
+    if not isinstance(level, Level):
+        level_obj = Level.from_id(level)
+    else:
+        level_obj = level
+
+    if level_obj.level_id == 5: return list(layer)
 
     filtered = []
     beat_interval = 60.0 / bpm if bpm > 0 else 0.5
@@ -125,9 +194,11 @@ def filter_performance_for_level(
         eighth_beats.append(beats[i])
         eighth_beats.append((beats[i] + beats[i+1]) / 2.0)
 
-    ghost_enabled = genre_config.get("features", {}).get("ghost_notes", True) if genre_config else True
+    ghost_enabled = True
+    if genre_config:
+        ghost_enabled = genre_config.get("features", {}).get("ghost_notes", True)
 
-    if level <= 1:
+    if level_obj.downbeat_only:
         target_beats = np.sort(np.unique(np.concatenate((downbeats, half_measure_beats))))
         for tb in target_beats:
             window_notes = [n for n in layer if tb - 0.20 <= n.start < tb + (beat_interval * 1.5)]
@@ -148,6 +219,8 @@ def filter_performance_for_level(
                         is_accent=root_note.is_accent,
                         dynamic_mark=root_note.dynamic_mark,
                         is_pickup=root_note.is_pickup,
+                        category="groove_anchor",
+                        is_anchor=True,
                     )
                 )
         return filtered
@@ -159,8 +232,8 @@ def filter_performance_for_level(
         c_eighth = get_closest_value(note.start, eighth_beats)
         is_on_eighth = abs(note.start - c_eighth) < 0.15 if c_eighth is not None else False
 
-        if level == 2:
-            if note.tag != "ghost" and (is_on_beat or (is_on_eighth and dur >= 0.20)):
+        if level_obj.level_id == 2:
+            if note.tag != "ghost" and (is_on_beat or (is_on_eighth and dur >= level_obj.min_duration)):
                 filtered.append(
                     NoteEvent(
                         start=note.start,
@@ -176,13 +249,18 @@ def filter_performance_for_level(
                         is_accent=note.is_accent,
                         dynamic_mark=note.dynamic_mark,
                         is_pickup=note.is_pickup,
+                        category=note.category,
+                        anchor_pattern=note.anchor_pattern,
+                        anchor_fret=note.anchor_fret,
+                        is_anchor=note.is_anchor,
                     )
                 )
-        elif level == 3:
-            if note.tag != "ghost" and dur >= 0.12:
+        elif level_obj.level_id == 3:
+            if note.tag != "ghost" and dur >= level_obj.min_duration:
                 filtered.append(note)
-        elif level == 4:
-            if not (note.tag == "ghost" and not ghost_enabled):
+        elif level_obj.level_id == 4:
+            is_ghost_allowed = ghost_enabled and level_obj.ghost_notes_allowed
+            if not (note.tag == "ghost" and not is_ghost_allowed):
                 filtered.append(note)
 
     return filtered
@@ -202,58 +280,22 @@ class AudioTranscriptionPipeline:
 
         print(f"[Processing] {artist_name} - {song_title} (Genre: {resolved_genre})")
 
-        bass_path = os.path.join(stem_folder, 'bass.wav')
-        drums_path = os.path.join(stem_folder, 'drums.wav') if os.path.exists(os.path.join(stem_folder, 'drums.wav')) else bass_path
-
-        if not os.path.exists(bass_path):
-            print(f"Skipped: Missing bass.wav in {stem_folder}")
-            return
-
         os.makedirs(self.output_dir, exist_ok=True)
 
-        sr = 22050
-        bass_y, _ = librosa.load(bass_path, sr=sr, mono=True)
-        drums_y, _ = librosa.load(drums_path, sr=sr, mono=True)
-
-        stem_dict = {'bass': bass_y, 'drums': drums_y}
-        for name in ['guitar', 'piano', 'vocals', 'other']:
-            p = os.path.join(stem_folder, f'{name}.wav')
-            if os.path.exists(p):
-                stem_dict[name], _ = librosa.load(p, sr=sr, mono=True)
-
-        tuning_offset = estimate_master_tuning(bass_y, sr)
-        detected_key, _ = detect_key_signature(
-            bass_y, sr, parsed_key=parsed_key_str, bass_filter_fn=apply_bass_bandpass
-        )
-
-        sos_low = signal.butter(4, [25 / (sr / 2), 350 / (sr / 2)], 'bandpass', output='sos')
-        bass_low = signal.sosfiltfilt(sos_low, bass_y)
-
-        raw_pyin_notes = pyin_predict_notes(bass_low, sr, conf_threshold=0.30, tuning_offset=tuning_offset)
-
-        tuning_type = genre_config.get("tuning", "4_string_standard") if genre_config else "4_string_standard"
-        min_p = 23 if "5_string" in tuning_type or "6_string" in tuning_type else 28
-        max_p = 84 if "6_string" in tuning_type else 72
-
-        corrected_notes = []
-        for n in raw_pyin_notes:
-            p_clamped = max(min_p, min(max_p, int(round(n.pitch))))
-            n.update_pitch(p_clamped)
-            corrected_notes.append(n)
-
-        octave_smoothed_notes = filter_octave_jumps(corrected_notes)
-
-        verified_notes = cross_stem_bleed_filter(octave_smoothed_notes, stem_dict, sr=sr)
-        purged_notes = purge_audio_artifacts(verified_notes, bass_audio=bass_y, sr=sr)
-
-        beat_times, instant_bpms, time_sig_str = estimate_beat_grid(drums_y, sr)
-        bpm = float(np.median(instant_bpms)) if len(instant_bpms) > 0 else 120.0
-        
-        is_compound = (
-            genre_config and genre_config.get("features", {}).get("compound_meter", False)
-        ) or (time_sig_str in ["6/8", "12/8"])
-
-        grid_aligned_notes = snap_events_to_beat_grid(purged_notes, beat_times, bpm, is_compound=is_compound)
+        try:
+            (
+                grid_aligned_notes,
+                detected_key,
+                beat_times,
+                instant_bpms,
+                time_sig_str,
+                bpm,
+                is_compound,
+                tuning_type,
+            ) = stems_to_note_events(stem_folder, genre_config, parsed_key_str=parsed_key_str)
+        except FileNotFoundError as e:
+            print(f"Skipped: {e}")
+            return
 
         selected_level = level if (isinstance(level, int) and 0 <= level <= 5) else 5
         target_levels = range(6) if generate_all_levels else [selected_level]
@@ -281,14 +323,24 @@ class AudioTranscriptionPipeline:
             fretboard_path, rakes, legatos, slides = hmm.solve(snapped_layer, bpm=bpm)
 
             for idx_n, note_n in enumerate(snapped_layer):
+                if idx_n < len(fretboard_path):
+                    note_n.fret_position = fretboard_path[idx_n]
                 if idx_n < len(legatos):
                     note_n.is_legato = legatos[idx_n]
                 if idx_n < len(slides):
                     note_n.is_slide = slides[idx_n]
                 if idx_n < len(rakes):
                     note_n.is_rake = rakes[idx_n]
+                note_n.determine_category()
 
-            expressive_data = {'rakes': rakes, 'legatos': legatos, 'slides': slides}
+            expressive_data = {
+                'rakes': rakes,
+                'legatos': legatos,
+                'slides': slides,
+                'categories': [n.category for n in snapped_layer],
+                'anchor_patterns': [n.anchor_pattern for n in snapped_layer],
+                'anchor_frets': [n.anchor_fret for n in snapped_layer],
+            }
 
             build_and_export_score(
                 snapped_layer,

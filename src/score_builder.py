@@ -1,7 +1,7 @@
 import fractions
 from music21 import stream, note, chord, meter, instrument, metadata, tie, articulations, dynamics, tempo, duration
 
-from note_event import NoteEvent
+from models import NoteEvent
 from pitch_theory import get_directional_enharmonic_pitch
 from xml_formatter import (
     idiomatic_rhythm_snap,
@@ -156,6 +156,9 @@ def build_and_export_score(
 
             if note_evt.is_accent and k == 0:
                 elem_sub.articulations.append(articulations.Accent())
+
+            if note_evt.is_downpick and k == 0:
+                elem_sub.articulations.append(articulations.DownBow())
 
             if num_chunks > 1:
                 if k == 0:
