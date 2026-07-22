@@ -1,52 +1,35 @@
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field, asdict
+from typing import List, Optional
 
 
 @dataclass
 class NoteEvent:
-    """Dataclass representing a parsed musical note event through all pipeline stages."""
-
     start: float
     end: float
     pitch: int
-    pitches: List[int] = field(default_factory=list)  # Polyphonic pitches (chords, double stops)
-    amplitude: float = 1.0  # Normalized RMS audio energy
-    bends: Optional[List[float]] = None  # Semitone pitch bends over time
-    microtone_cents: float = 0.0  # Microtonal pitch offset in cents
-    tag: str = "normal"  # "normal", "staccato", "ghost", "slap", "pop", "palm_mute", "let_ring", "harmonic"
+    pitches: List[int] = field(default_factory=list)
+    amplitude: float = 0.5
+    bends: List[float] = field(default_factory=list)
+    microtone_cents: float = 0.0
+    tag: str = "normal"  # normal, staccato, slap, pop, palm_mute, ghost, harmonic, hammer_on, pull_off, slide
     duty_cycle: float = 1.0
-    string_idx: Optional[int] = None
-    fret_val: Optional[int] = None
-    finger_val: Optional[int] = None
-    positions: List[Tuple[int, int, int]] = field(default_factory=list)  # [(string, fret, finger), ...]
-
-    # Expressive & Rhythmic Markers
     is_triplet: bool = False
     is_accent: bool = False
-    dynamic_mark: Optional[str] = None  # "p", "mp", "mf", "f"
-    is_legato: bool = False
-    is_slide: bool = False
-    is_rake: bool = False
+    dynamic_mark: str = "mf"  # p, mp, mf, f
     is_pickup: bool = False
     is_harmonic: bool = False
-    spanner_tag: Optional[str] = None  # "let_ring", "palm_mute"
-    spanner_type: Optional[str] = None  # "start", "stop", "continue"
-
-    def __post_init__(self):
-        if not self.pitches and self.pitch is not None:
-            self.pitches = [self.pitch]
-        elif self.pitches and self.pitch is None:
-            self.pitch = self.pitches[0]
-
-    def update_pitch(self, new_pitch: int):
-        """Synchronizes single pitch update with pitches list to prevent mutation bugs."""
-        self.pitch = new_pitch
-        self.pitches = [new_pitch]
+    slide_from: Optional[int] = None  # Source MIDI pitch if note arrived via a slide/hammer-on
 
     @property
     def duration(self) -> float:
-        return max(0.001, self.end - self.start)
+        return max(0.0, self.end - self.start)
 
-    @property
-    def is_polyphonic(self) -> bool:
-        return len(self.pitches) > 1
+    def update_pitch(self, new_pitch: int):
+        self.pitch = new_pitch
+        self.pitches = [new_pitch]
+
+    def to_dict(self) -> dict:
+        """Helper to serialize NoteEvent for tab engines, UI rendering, or JSON export."""
+        d = asdict(self)
+        d['duration'] = self.duration
+        return d

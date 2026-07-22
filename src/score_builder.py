@@ -143,11 +143,12 @@ def build_and_export_score(
             if note_evt.is_harmonic:
                 elem_sub.articulations.append(articulations.Harmonic())
 
-            if note_evt.is_triplet and k == 0:
+            # Safely handle triplet tuplet attachments
+            if note_evt.is_triplet and k == 0 and float(chunk_dur) >= 0.125:
                 elem_sub.duration = duration.Duration(float(chunk_dur))
                 elem_sub.duration.appendTuplet(duration.Tuplet(3, 2))
             else:
-                elem_sub.quarterLength = float(chunk_dur)
+                elem_sub.quarterLength = max(0.0625, float(chunk_dur))
 
             if note_evt.tag == "ghost":
                 elem_sub.notehead = 'x'
@@ -191,7 +192,6 @@ def build_and_export_score(
 
     m21_score.append(m21_part)
 
-    # Writes clean .musicxml file
     m21_score.write('musicxml', fp=output_xml_path)
 
     sanitize_and_inject_tablature(
@@ -202,4 +202,5 @@ def build_and_export_score(
         level=target_level,
         snapped_layer=note_layer,
         expressive_data=expressive_data,
+        time_sig_str=time_sig_str,
     )

@@ -32,15 +32,126 @@ def estimate_master_tuning(audio_y, sr):
         return 0.0
 
 
+def detect_key_signature(audio_y, sr) -> tuple[set[int], int, str]:
+    """
+    Detects global key signature using Krumhansl-Schmuckler pitch class profiles.
+    Returns: (scale_pitch_classes_set, root_midi_class, mode_string)
+    """
+    if audio_y is None or len(audio_y) == 0:
+        return set(range(12)), 0, "major"
+
+    chroma = librosa.feature.chroma_stft(y=_pad_audio_for_fft(audio_y, 4096), sr=sr)
+    chroma_avg = np.mean(chroma, axis=1)
+
+    major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+    minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 2.69, 3.34, 3.17, 3.28])
+
+    best_score = -np.inf
+    best_root = 0
+    best_mode = "major"
+
+    for root in range(12):
+        maj_rot = np.roll(major_profile, root)
+        min_rot = np.roll(minor_profile, root)
+        score_maj = float(np.corrcoef(chroma_avg, maj_rot)[0, 1])
+        score_min = float(np.corrcoef(chroma_avg, min_rot)[0, 1])
+
+        if score_maj > best_score:
+            best_score, best_root, best_mode = score_maj, root, "major"
+        if score_min > best_score:
+            best_score, best_root, best_mode = score_min, root, "minor"
+
+    scale_steps = [0, 2, 4, 5, 7, 9, 11] if best_mode == "major" else [0, 2, 3, 5, 7, 8, 10]
+    scale_pc = set((best_root + step) % 12 for step in scale_steps)
+    return scale_pc, best_root, best_mode
+
+
+def apply_scale_hysteresis(notes: list[NoteEvent], scale_pc: set[int], min_chromatic_duration=0.12) -> list[NoteEvent]:
+    """
+    Snaps out-of-scale transient notes to nearest in-key pitch unless they have sufficient
+    duration/intentionality.
+    """
+    for n in notes:
+        pc = n.pitch % 12
+        if pc not in scale_pc and n.duration < min_chromatic_duration:
+            diffs = [(abs((pc - spc + 6) % 12 - 6), spc) for spc in scale_pc]
+            diffs.sort(key=lambda x: x[0])
+            nearest_spc = diffs[0][1]
+            shift = (nearest_spc - pc + 6) % 12 - 6
+            n.update_pitch(n.pitch + shift)
+    return notes
+
+
+def collapse_gestures(notes: list[NoteEvent], max_gesture_duration=0.16) -> list[NoteEvent]:
+    """
+    Abstracts fast pitch trajectories (slides, hammer-ons, pull-offs) into single destination
+    notes with symbolic articulation tags.
+    """
+    if len(notes) < 2:
+        return notes
+
+    abstracted = []
+    i = 0
+    while i < len(notes):
+        curr = notes[i]
+        if i + 1 < len(notes):
+            next_n = notes[i + 1]
+            dur = next_n.start - curr.start
+            pitch_delta = next_n.pitch - curr.pitch
+
+            if dur <= max_gesture_duration and 1 <= abs(pitch_delta) <= 4:
+                next_n.slide_from = curr.pitch
+                next_n.start = curr.start
+                if abs(pitch_delta) <= 2:
+                    next_n.tag = "hammer_on" if pitch_delta > 0 else "pull_off"
+                else:
+                    next_n.tag = "slide"
+                i += 1
+                continue
+
+        abstracted.append(curr)
+        i += 1
+
+    return abstracted
+
+
+def smooth_macro_dynamics(notes: list[NoteEvent], window_size_sec=2.5, hysteresis_threshold=0.25) -> list[NoteEvent]:
+    """
+    Calculates dynamic markings using a macro time-window with hysteresis to prevent notation clutter.
+    """
+    if not notes:
+        return notes
+
+    dyn_levels = [("p", 0.0, 0.30), ("mp", 0.30, 0.50), ("mf", 0.50, 0.72), ("f", 0.72, 1.01)]
+    dyn_map = {"p": 0.15, "mp": 0.40, "mf": 0.60, "f": 0.85}
+    current_dynamic = "mf"
+
+    for note in notes:
+        w_start, w_end = note.start - (window_size_sec / 2.0), note.start + (window_size_sec / 2.0)
+        window_amps = [n.amplitude for n in notes if w_start <= n.start <= w_end]
+        avg_amp = float(np.mean(window_amps)) if window_amps else note.amplitude
+
+        target_dynamic = "mf"
+        for d_name, d_low, d_high in dyn_levels:
+            if d_low <= avg_amp < d_high:
+                target_dynamic = d_name
+                break
+
+        if abs(dyn_map[target_dynamic] - dyn_map[current_dynamic]) >= hysteresis_threshold:
+            current_dynamic = target_dynamic
+
+        note.dynamic_mark = current_dynamic
+
+    return notes
+
+
 def detect_polyphonic_harmonies(audio_y, sr, note_event: NoteEvent, hop_length=512):
-    """Detects double-stops or chord intervals (e.g., 10ths, 7ths, 5ths) during the note event."""
-    start_sample = int(note_event.start * sr)
-    end_sample = int(note_event.end * sr)
+    """Detects double-stops or chord intervals during the note event."""
+    start_sample, end_sample = int(note_event.start * sr), int(note_event.end * sr)
     if end_sample - start_sample < 1024:
         return [note_event.pitch]
 
-    segment = audio_y[start_sample:end_sample]
-    segment = _pad_audio_for_fft(segment, min_len=4096)
+    segment = _pad_audio_for_fft(audio_y[start_sample:end_sample], min_len=4096)
     stft_mag = np.abs(librosa.stft(segment, n_fft=4096, hop_length=hop_length))
     avg_spectrum = np.mean(stft_mag, axis=1)
     fft_freqs = librosa.fft_frequencies(sr=sr, n_fft=4096)
@@ -49,9 +160,7 @@ def detect_polyphonic_harmonies(audio_y, sr, note_event: NoteEvent, hop_length=5
     if root_hz < 20:
         return [note_event.pitch]
 
-    min_sec_hz = root_hz * (2 ** (3 / 12))
-    max_sec_hz = root_hz * (2 ** (28 / 12))
-
+    min_sec_hz, max_sec_hz = root_hz * (2 ** (3 / 12)), root_hz * (2 ** (28 / 12))
     valid_mask = (fft_freqs >= min_sec_hz) & (fft_freqs <= max_sec_hz)
     if not np.any(valid_mask):
         return [note_event.pitch]
@@ -65,9 +174,7 @@ def detect_polyphonic_harmonies(audio_y, sr, note_event: NoteEvent, hop_length=5
     sub_spectrum = avg_spectrum.copy()
     for mult in [2, 3, 4]:
         h_bin = np.argmin(np.abs(fft_freqs - (root_hz * mult)))
-        b_start = max(0, h_bin - 2)
-        b_end = min(len(sub_spectrum), h_bin + 3)
-        sub_spectrum[b_start:b_end] = 0.0
+        sub_spectrum[max(0, h_bin - 2):min(len(sub_spectrum), h_bin + 3)] = 0.0
 
     sub_spectrum[~valid_mask] = 0.0
     peak_bin = np.argmax(sub_spectrum)
@@ -83,7 +190,7 @@ def detect_polyphonic_harmonies(audio_y, sr, note_event: NoteEvent, hop_length=5
 
 
 def pyin_predict_notes(audio_y, sr, conf_threshold=0.30, tuning_offset=0.0) -> list[NoteEvent]:
-    """Runs pYIN pitch detection calibrated by master tuning offset with polyphonic interval detection."""
+    """Runs pYIN pitch detection calibrated by master tuning offset with smoothed filtering."""
     hop_length, frame_length = 512, 4096
     filtered_audio = apply_bass_bandpass(audio_y, sr, lowcut=25.0, highcut=400.0)
     filtered_audio = _pad_audio_for_fft(filtered_audio, min_len=frame_length)
@@ -95,8 +202,8 @@ def pyin_predict_notes(audio_y, sr, conf_threshold=0.30, tuning_offset=0.0) -> l
     f0 = np.nan_to_num(f0)
     voiced_probs = np.nan_to_num(voiced_probs)
 
-    f0 = median_filter(f0, size=3)
-    voiced_probs = median_filter(voiced_probs, size=3)
+    f0 = median_filter(f0, size=7)
+    voiced_probs = median_filter(voiced_probs, size=5)
     times = librosa.times_like(f0, sr=sr, hop_length=hop_length)
 
     rms_env = librosa.feature.rms(y=filtered_audio, frame_length=frame_length, hop_length=hop_length)[0]
@@ -147,8 +254,8 @@ def pyin_predict_notes(audio_y, sr, conf_threshold=0.30, tuning_offset=0.0) -> l
             if not in_note:
                 in_note, start_time, pitch_buf, bend_buf, idx_buf = True, t, [midi_p], [midi_p], [idx]
             else:
-                if abs(midi_p - np.median(pitch_buf)) > 1.5:
-                    if (t - start_time) >= 0.04:
+                if abs(midi_p - np.median(pitch_buf)) > 2.1:
+                    if (t - start_time) >= 0.08:
                         emit_note_event(t)
                         start_time, pitch_buf, bend_buf, idx_buf = t, [midi_p], [midi_p], [idx]
                     else:
@@ -161,7 +268,7 @@ def pyin_predict_notes(audio_y, sr, conf_threshold=0.30, tuning_offset=0.0) -> l
                     idx_buf.append(idx)
         else:
             if in_note:
-                if (t - start_time) >= 0.03:
+                if (t - start_time) >= 0.04:
                     emit_note_event(t)
                 in_note, pitch_buf, bend_buf, idx_buf = False, [], [], []
 
@@ -231,19 +338,16 @@ def purge_audio_artifacts(
     raw_notes: list[NoteEvent],
     bass_audio=None,
     sr=22050,
-    max_micro_rest=0.25,
-    min_valid_duration=0.075,
+    max_micro_rest=0.18,
+    min_valid_duration=0.08,
     max_single_note_dur=4.0,
 ) -> list[NoteEvent]:
-    """
-    Purges artifacts, detects palm mutes, ghost notes, and harmonics while safely padding audio arrays for FFT features.
-    """
     if not raw_notes:
         return []
 
     n_samples = len(bass_audio) if bass_audio is not None else 0
-
     capped_notes = []
+
     for n in raw_notes:
         e = n.start + max_single_note_dur if n.duration > max_single_note_dur else n.end
         tag = n.tag
@@ -253,8 +357,6 @@ def purge_audio_artifacts(
             e_idx = min(int(n.end * sr), n_samples)
             if e_idx - s_idx > 256:
                 note_seg = bass_audio[s_idx:e_idx]
-
-                # Palm mute detection
                 note_seg_stft = _pad_audio_for_fft(note_seg, min_len=1024)
                 stft_seg = np.abs(librosa.stft(note_seg_stft, n_fft=1024, hop_length=256))
                 if stft_seg.shape[1] >= 2:
@@ -263,7 +365,6 @@ def purge_audio_artifacts(
                     if hf_decay < 0.15 and total_decay < 0.25 and tag == "normal":
                         tag = "palm_mute"
 
-                # Spectral feature analysis with padded audio to avoid n_fft=2048 warnings
                 note_seg_spectral = _pad_audio_for_fft(note_seg, min_len=2048)
                 flatness = np.mean(librosa.feature.spectral_flatness(y=note_seg_spectral))
                 if (n.amplitude < 0.22 and flatness > 0.08) or (n.amplitude < 0.15 and n.duration <= 0.15):
@@ -289,23 +390,26 @@ def purge_audio_artifacts(
             )
         )
 
-    valid_notes = [n for n in capped_notes if not (n.duration < min_valid_duration and n.amplitude < 0.12)]
+    valid_notes = [n for n in capped_notes if not (n.duration < min_valid_duration and n.amplitude < 0.18)]
     if not valid_notes:
         return []
 
     purged = []
     curr = valid_notes[0]
 
-    # Micro-gap merging strictly checks for IDENTICAL pitches
     for next_n in valid_notes[1:]:
         gap = next_n.start - curr.end
+        pitch_diff = abs(curr.pitch - next_n.pitch)
+        is_pitch_wobble = (pitch_diff <= 1) or (pitch_diff == 12)
 
-        if curr.pitch == next_n.pitch and gap <= max_micro_rest and (next_n.end - curr.start) <= (max_single_note_dur * 1.5):
+        if is_pitch_wobble and gap <= max_micro_rest and (next_n.end - curr.start) <= (max_single_note_dur * 1.5):
             curr.end = next_n.end
             curr.amplitude = max(curr.amplitude, next_n.amplitude)
             if curr.bends or next_n.bends:
                 curr.bends = (curr.bends or []) + (next_n.bends or [])
-        elif 0 < gap <= (max_micro_rest * 0.75):
+            if pitch_diff == 12:
+                curr.update_pitch(min(curr.pitch, next_n.pitch))
+        elif 0 < gap <= 0.12:
             curr.end = next_n.start
             purged.append(curr)
             curr = next_n
@@ -318,7 +422,7 @@ def purge_audio_artifacts(
 
 
 def estimate_beat_grid(drums_y, sr):
-    """Estimates beat grid timestamps, instantaneous BPM array, and meter profile based on onset pulse periodicity."""
+    """Estimates beat grid timestamps, instantaneous BPM array, and meter profile."""
     tempo_val, beat_times = librosa.beat.beat_track(y=drums_y, sr=sr, units='time')
 
     if len(beat_times) < 2:
@@ -363,17 +467,15 @@ def estimate_beat_grid(drums_y, sr):
 def snap_events_to_beat_grid(
     raw_notes: list[NoteEvent], beat_times, bpm, is_compound=False, subdivisions=4
 ) -> list[NoteEvent]:
-    """
-    Aligns notes relative to beat anchors using an Onset-to-Onset (Legato-First) framework.
-    Prevents rest clutter by extending note lengths to subsequent onsets and applying staccato
-    dots for short-sounding notes.
-    """
+    """Aligns notes relative to beat anchors using Onset-to-Onset duration snapping."""
     if not raw_notes:
         return []
 
     grid_notes = []
     avg_amp = float(np.mean([n.amplitude for n in raw_notes])) if raw_notes else 0.5
     first_downbeat = beat_times[0] if len(beat_times) > 0 else 0.0
+    sec_per_beat = 60.0 / bpm if bpm > 0 else 0.5
+    rest_threshold_sec = sec_per_beat * 0.5
 
     def get_local_beat_dur(time_val):
         if len(beat_times) > 0:
@@ -383,7 +485,7 @@ def snap_events_to_beat_grid(
                 return float(beat_times[b_idx + 1] - ref), ref
             elif b_idx > 0:
                 return float(ref - beat_times[b_idx - 1]), ref
-        return (60.0 / bpm if bpm > 0 else 0.5), 0.0
+        return sec_per_beat, 0.0
 
     def quantize_time(t_val):
         local_beat_dur, ref_beat = get_local_beat_dur(t_val)
@@ -406,7 +508,6 @@ def snap_events_to_beat_grid(
         raw_dur = note.duration
 
         is_pickup = (i == 0 and note.start < (first_downbeat - 0.15))
-
         snapped_s, subdiv_sec, use_triplet = quantize_time(note.start)
 
         if i + 1 < num_notes:
@@ -420,10 +521,9 @@ def snap_events_to_beat_grid(
 
         duty_cycle = raw_dur / nominal_grid_dur if nominal_grid_dur > 0 else 1.0
 
-        # Legato-First heuristic decision
-        if duty_cycle >= 0.50 or raw_gap <= 0.15 or i == num_notes - 1:
+        if raw_gap < rest_threshold_sec or duty_cycle >= 0.50 or i == num_notes - 1:
             snapped_e = snapped_s + nominal_grid_dur
-            is_staccato = False
+            is_staccato = (duty_cycle < 0.45 and note.tag == "normal")
         elif raw_gap <= 0.35 and note.tag not in ["ghost", "palm_mute"]:
             snapped_e = snapped_s + nominal_grid_dur
             is_staccato = True
@@ -436,16 +536,6 @@ def snap_events_to_beat_grid(
         effective_duty = raw_dur / grid_dur
 
         is_accent = note.amplitude > (avg_amp * 1.45)
-
-        if note.amplitude < 0.25:
-            dynamic_mark = "p"
-        elif note.amplitude < 0.45:
-            dynamic_mark = "mp"
-        elif note.amplitude < 0.70:
-            dynamic_mark = "mf"
-        else:
-            dynamic_mark = "f"
-
         tag_out = "staccato" if is_staccato else note.tag
 
         grid_notes.append(
@@ -461,10 +551,103 @@ def snap_events_to_beat_grid(
                 duty_cycle=effective_duty,
                 is_triplet=use_triplet,
                 is_accent=is_accent,
-                dynamic_mark=dynamic_mark,
+                dynamic_mark=note.dynamic_mark,
                 is_pickup=is_pickup,
                 is_harmonic=note.is_harmonic,
+                slide_from=note.slide_from,
             )
         )
 
     return grid_notes
+
+
+def apply_lossy_abstraction(
+    raw_notes: list[NoteEvent],
+    audio_y,
+    sr,
+    beat_times,
+    bpm,
+    abstraction_level: int = 3,
+    is_compound: bool = False,
+    stem_dict: dict = None,
+) -> list[NoteEvent]:
+    """
+    Applies multi-level lossy abstraction pipeline based on requested complexity mode (Levels 1 to 5):
+    - Level 1: Coarse score (8th notes, no microtones/bends, heavy scale snap, simple dynamics)
+    - Level 2: Moderate score (16th notes, basic gestures, key scale snap)
+    - Level 3: Standard score (Balanced score with slides, legato, key scale, smooth dynamics)
+    - Level 4: Expressive score (Preserves subtle bends, staccato, detail)
+    - Level 5: High-precision audio transcript (Minimal abstraction, raw timings & microtonal cents)
+    """
+    if not raw_notes:
+        return []
+
+    # 1. Filter cross-stem bleed if stems are provided
+    if stem_dict is not None:
+        raw_notes = cross_stem_bleed_filter(raw_notes, stem_dict, sr)
+
+    # 2. Purge raw DSP artifacts & micro-wobbles
+    purged = purge_audio_artifacts(raw_notes, bass_audio=audio_y, sr=sr)
+
+    # 3. Key Signature Detection & Scale Hysteresis Snap (Levels 1-3)
+    if abstraction_level <= 3 and audio_y is not None:
+        scale_pc, key_root, mode = detect_key_signature(audio_y, sr)
+        min_chrom_dur = 0.18 if abstraction_level == 1 else (0.14 if abstraction_level == 2 else 0.10)
+        purged = apply_scale_hysteresis(purged, scale_pc, min_chromatic_duration=min_chrom_dur)
+
+    # 4. Gesture Collapsing (Slides, Hammer-ons, Pull-offs) (Levels 1-4)
+    if abstraction_level <= 4:
+        max_gest_dur = 0.18 if abstraction_level <= 2 else 0.14
+        purged = collapse_gestures(purged, max_gesture_duration=max_gest_dur)
+
+    # 5. Beat Grid Quantization & Onset-to-Onset (O2O) Duration Extension
+    subdivs = 2 if abstraction_level == 1 else 4
+    grid_notes = snap_events_to_beat_grid(
+        purged, beat_times=beat_times, bpm=bpm, is_compound=is_compound, subdivisions=subdivs
+    )
+
+    # 6. Macro Dynamic Smoothing (Levels 1-4)
+    if abstraction_level <= 4:
+        win_size = 3.5 if abstraction_level <= 2 else 2.5
+        grid_notes = smooth_macro_dynamics(grid_notes, window_size_sec=win_size, hysteresis_threshold=0.25)
+
+    # 7. Post-processing according to abstraction level
+    if abstraction_level == 1:
+        for n in grid_notes:
+            n.microtone_cents = 0.0
+            n.bends = []
+
+    return grid_notes
+
+
+def transcribe_audio(
+    bass_y,
+    sr=22050,
+    drums_y=None,
+    stem_dict=None,
+    abstraction_level: int = 3,
+) -> tuple[list[NoteEvent], float, str]:
+    """
+    High-level entry point function that runs the complete audio processing pipeline:
+    Tuning Estimation -> Pitch Detection -> Beat Grid -> Lossy Abstraction.
+    """
+    tuning_offset = estimate_master_tuning(bass_y, sr)
+    raw_notes = pyin_predict_notes(bass_y, sr, tuning_offset=tuning_offset)
+
+    drums_signal = drums_y if drums_y is not None else bass_y
+    beat_times, bpms, time_sig = estimate_beat_grid(drums_signal, sr)
+    avg_bpm = float(np.median(bpms))
+    is_compound = time_sig in ["6/8", "12/8", "7/8"]
+
+    final_notes = apply_lossy_abstraction(
+        raw_notes=raw_notes,
+        audio_y=bass_y,
+        sr=sr,
+        beat_times=beat_times,
+        bpm=avg_bpm,
+        abstraction_level=abstraction_level,
+        is_compound=is_compound,
+        stem_dict=stem_dict,
+    )
+
+    return final_notes, avg_bpm, time_sig
