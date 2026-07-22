@@ -171,14 +171,22 @@ def cross_stem_bleed_filter(raw_notes, stem_dict, sr, threshold_ratio=0.85):
     return verified_notes
 
 
-def purge_audio_artifacts(raw_notes, bass_audio=None, sr=22050, max_micro_rest=0.25, min_valid_duration=0.075):
-    """Purges short transients and merges micro-rests and legato overlaps."""
+def purge_audio_artifacts(raw_notes, bass_audio=None, sr=22050, max_micro_rest=0.25, min_valid_duration=0.075, max_single_note_dur=4.0):
+    """Purges short transients and merges micro-rests and legato overlaps while capping infinite tie tails."""
     if not raw_notes:
         return []
 
+    # Cap individual raw note durations to avoid stuck MIDI notes from audio pitch decay
+    capped_notes = []
+    for s, e, p, a, b in raw_notes:
+        dur = e - s
+        if dur > max_single_note_dur:
+            e = s + max_single_note_dur
+        capped_notes.append([s, e, p, a, b])
+
     valid_notes = [
-        [s, e, p, a, b] for s, e, p, a, b in raw_notes
-        if not (e - s < min_valid_duration and a < 0.35)
+        note_item for note_item in capped_notes
+        if not (note_item[1] - note_item[0] < min_valid_duration and note_item[3] < 0.35)
     ]
 
     if not valid_notes:
@@ -206,7 +214,7 @@ def purge_audio_artifacts(raw_notes, bass_audio=None, sr=22050, max_micro_rest=0
         if not has_palm_mute and 0 < gap <= 0.30:
             c_end = curr[1] = n_start
 
-        if abs(c_pitch - n_pitch) <= 1 and gap <= max_micro_rest:
+        if abs(c_pitch - n_pitch) <= 1 and gap <= max_micro_rest and (n_end - c_start) <= (max_single_note_dur * 1.5):
             curr[1], curr[3] = n_end, max(c_amp, n_amp)
             if c_bends or n_bends:
                 curr[4] = (c_bends or []) + (n_bends or [])

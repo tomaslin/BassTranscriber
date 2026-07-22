@@ -29,7 +29,7 @@ from src.xml_formatter import (
 )
 
 def load_genre_configs():
-    config_path = os.path.join(os.path.dirname(__file__), "..", "config", "genres.json")
+    config_path = os.path.join(os.path.dirname(__file__), "config", "genres.json")
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -98,14 +98,12 @@ def filter_performance_for_level(layer, level, beats, is_compound, bpm, genre_co
 
     if len(beats) == 0: return list(layer)
 
-    # Establish grids for alignment checking
     downbeats = np.arange(beats[0], layer[-1][1] + measure_len, measure_len) if layer[-1][1] >= beats[0] else np.array([])
     half_measure_beats = np.arange(beats[0] + (measure_len / 2), layer[-1][1] + measure_len, measure_len) if layer[-1][1] >= beats[0] else np.array([])
     eighth_beats = [b + beat_interval / 2 for b in beats]
     
     ghost_enabled = genre_config["features"].get("ghost_notes", True) if genre_config else True
 
-    # Level 0/1: Absolute anchors (Beats 1 & 3)
     if level <= 1:
         target_beats = np.sort(np.concatenate((downbeats, half_measure_beats)))
         for tb in target_beats:
@@ -116,7 +114,6 @@ def filter_performance_for_level(layer, level, beats, is_compound, bpm, genre_co
                 filtered.append((root_note[0], end_time, root_note[2], root_note[3], root_note[4], "normal", root_note[6]))
         return filtered
 
-    # Higher Levels: Iterate over the track and evaluate syncopation
     for start, end, pitch_val, amp, bends, tag, flux_val in layer:
         dur = end - start
         c_beat = get_closest_value(start, beats)
@@ -125,17 +122,14 @@ def filter_performance_for_level(layer, level, beats, is_compound, bpm, genre_co
         is_on_eighth = abs(start - c_eighth) < 0.15 if c_eighth is not None else False
 
         if level == 2:
-            # Quarter notes and on-the-beat 8ths. Strip complex syncopation and ghost notes.
             if tag != "ghost" and (is_on_beat or (is_on_eighth and dur >= 0.20)):
                 filtered.append((start, end, pitch_val, amp, bends, "normal", flux_val))
                 
         elif level == 3:
-            # Reintroduce syncopation and offbeats. Suppress ultra-fast runs and ghost notes.
             if tag != "ghost" and dur >= 0.12:
                 filtered.append((start, end, pitch_val, amp, bends, tag, flux_val))
                 
         elif level == 4:
-            # Full recorded line. Keep fast runs and fills. Suppress micro-nuances if disabled.
             if not (tag == "ghost" and not ghost_enabled):
                 filtered.append((start, end, pitch_val, amp, bends, tag, flux_val))
 
@@ -154,7 +148,7 @@ def process_folder(stem_folder, generate_all_levels=False, custom_output_dir=Non
         print(f"Skipped: Missing bass.wav in {stem_folder}")
         return
 
-    output_dir = custom_output_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'output_bass')
+    output_dir = custom_output_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output_bass')
     os.makedirs(output_dir, exist_ok=True)
 
     sr = 22050
@@ -172,8 +166,6 @@ def process_folder(stem_folder, generate_all_levels=False, custom_output_dir=Non
 
     sos_low = signal.butter(4, [25 / (sr / 2), 280 / (sr / 2)], 'bandpass', output='sos')
     bass_low = signal.sosfiltfilt(sos_low, bass_y)
-    sos_high = signal.butter(4, 1800 / (sr / 2), 'highpass', output='sos')
-    bass_high = signal.sosfiltfilt(sos_high, bass_y)
 
     raw_pyin_notes = pyin_predict_notes(bass_low, sr, conf_threshold=0.30, tuning_offset=tuning_offset)
     corrected_notes = [(s, e, max(28, min(67, int(round(p)))), a, b) for s, e, p, a, b in raw_pyin_notes]
@@ -186,14 +178,12 @@ def process_folder(stem_folder, generate_all_levels=False, custom_output_dir=Non
 
     performance_layer = [(s, e, p, a, b, "normal", 0.0) for s, e, p, a, b in purged_notes]
 
-    # Level constraint check: Default to 5 (most difficult)
-    if isinstance(level, int) and 0 <= level <= 5:
-        selected_level = level
-    else:
-        selected_level = 5
-
+    selected_level = level if (isinstance(level, int) and 0 <= level <= 5) else 5
     target_levels = range(6) if generate_all_levels else [selected_level]
-    time_to_beats_mapper = interp1d(beat_times, np.arange(len(beat_times)), kind='linear', fill_value="extrapolate") if len(beat_times) > 1 else lambda t: 0.0
+
+    sec_per_quarter = (60.0 / bpm) if bpm > 0 else 0.5
+    measure_capacity = fractions.Fraction(6, 1) if is_compound else fractions.Fraction(4, 1)
+    time_sig_str = '12/8' if is_compound else '4/4'
 
     for target_level in target_levels:
         xml_out = os.path.join(output_dir, f"{clean_filename}_Level{target_level}.musicxml" if generate_all_levels else f"{clean_filename}.musicxml")
@@ -213,22 +203,75 @@ def process_folder(stem_folder, generate_all_levels=False, custom_output_dir=Non
         m21_score.metadata = metadata.Metadata()
         m21_score.metadata.title, m21_score.metadata.composer = song_title, artist_name
 
-        curr_measure = stream.Measure(number=1)
+        curr_measure_num = 1
+        curr_measure = stream.Measure(number=curr_measure_num)
         curr_measure.append(clef.BassClef())
         curr_measure.append(detected_key)
-        curr_measure.append(meter.TimeSignature('12/8' if is_compound else '4/4'))
+        curr_measure.append(meter.TimeSignature(time_sig_str))
+
+        curr_m_fill = fractions.Fraction(0, 1)
+        current_time_q = fractions.Fraction(0, 1)
 
         for i, (start, end, pitch_val, amp, _, _, _) in enumerate(snapped_layer):
-            key_pitch = get_key_aware_pitch(pitch_val, detected_key)
-            n = note.Note(key_pitch)
-            n.quarterLength = idiomatic_rhythm_snap(end - start, level=target_level, is_compound=is_compound)
-            s_idx, f_val = fretboard_path[i] if i < len(fretboard_path) else (4, 0)
-            n.articulations.extend([articulations.StringIndication(s_idx), articulations.FretIndication(f_val)])
-            curr_measure.append(n)
+            start_q = fractions.Fraction(round((start / sec_per_quarter) * 4), 4)
+            raw_dur_q = max(0.25, (end - start) / sec_per_quarter)
+            dur_q = idiomatic_rhythm_snap(raw_dur_q, level=target_level, is_compound=is_compound)
 
-        consolidate_measure_notation(curr_measure)
-        m21_part.append(curr_measure)
+            if start_q > current_time_q:
+                rest_q = start_q - current_time_q
+                rest_chunks = decompose_duration_engraver_rules(rest_q, curr_m_fill, measure_capacity, is_compound)
+                for r_dur in rest_chunks:
+                    r = note.Rest()
+                    r.quarterLength = float(r_dur)
+                    curr_measure.append(r)
+                    curr_m_fill += r_dur
+                    current_time_q += r_dur
+                    if curr_m_fill >= measure_capacity:
+                        consolidate_measure_notation(curr_measure)
+                        m21_part.append(curr_measure)
+                        curr_measure_num += 1
+                        curr_measure = stream.Measure(number=curr_measure_num)
+                        curr_m_fill = fractions.Fraction(0, 1)
+
+            s_idx, f_val = fretboard_path[i] if i < len(fretboard_path) else (4, 0)
+            key_pitch = get_key_aware_pitch(pitch_val, detected_key)
+
+            note_chunks = decompose_duration_engraver_rules(dur_q, curr_m_fill, measure_capacity, is_compound)
+            num_chunks = len(note_chunks)
+
+            for k, chunk_dur in enumerate(note_chunks):
+                n_sub = note.Note(key_pitch)
+                n_sub.quarterLength = float(chunk_dur)
+                n_sub.articulations.extend([articulations.StringIndication(s_idx), articulations.FretIndication(f_val)])
+
+                if num_chunks > 1:
+                    if k == 0:
+                        n_sub.tie = tie.Tie('start')
+                    elif k == num_chunks - 1:
+                        n_sub.tie = tie.Tie('stop')
+                    else:
+                        n_sub.tie = tie.Tie('continue')
+
+                curr_measure.append(n_sub)
+                curr_m_fill += chunk_dur
+                current_time_q += chunk_dur
+
+                if curr_m_fill >= measure_capacity:
+                    consolidate_measure_notation(curr_measure)
+                    m21_part.append(curr_measure)
+                    curr_measure_num += 1
+                    curr_measure = stream.Measure(number=curr_measure_num)
+                    curr_m_fill = fractions.Fraction(0, 1)
+
+        if len(curr_measure.notesAndRests) > 0:
+            consolidate_measure_notation(curr_measure)
+            m21_part.append(curr_measure)
+
         m21_score.append(m21_part)
+
+        # Normalizes non-standard durations before exporting
+        m21_score.makeNotation(inPlace=True)
+
         m21_score.write('musicxml', fp=xml_out)
 
         sanitize_and_inject_tablature(xml_out, artist_name, song_title, '4_string_standard', level=target_level)

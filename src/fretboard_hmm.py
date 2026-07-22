@@ -104,6 +104,10 @@ class ErgonomicFretboardHMMSolver:
                     else:
                         inertia_penalty = fret_span * 1.2
 
+                    # Penalize large fret leaps in fast passages (erogonomic fix)
+                    if onset_dt < 0.25 and fret_span >= 4:
+                        inertia_penalty += 120.0
+
                     if p_fret == 0 or c_fret == 0:
                         fret_dist = 0.2
                         stretch_penalty = 0.0
@@ -135,7 +139,8 @@ class ErgonomicFretboardHMMSolver:
                     if string_diff == 0:
                         string_shift = 0.0
                     elif string_diff > 0:
-                        string_shift = math.pow(string_diff, 1.3) * 1.8
+                        # Moving to lower pitch string: penalize large jumps up the neck
+                        string_shift = math.pow(string_diff, 1.3) * 1.8 + (80.0 if fret_span >= 4 else 0.0)
                     else:
                         string_shift = math.pow(abs(string_diff), 1.4) * 2.5
 
@@ -185,7 +190,7 @@ class ErgonomicFretboardHMMSolver:
             if (c_string - p_string) == 1 and onset_dt < 0.12:
                 rakes[i] = True
 
-            if c_string == p_string and p_fret > 0 and c_fret > 0:
+            if c_string == p_string and p_fret > 0 and c_fret > 0 and p_fret != c_fret:
                 fret_diff = abs(c_fret - p_fret)
                 if fret_diff in [1, 2, 3] and onset_dt < 0.05:
                     legatos[i] = True

@@ -105,7 +105,7 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
             clean_xml = content[s_idx : e_idx + len('</score-partwise>')]
             with open(xml_path, 'w', encoding='utf-8') as f:
                 f.write(clean_xml)
-    except Exception as e:
+    except Exception:
         pass
 
     tree = ET.parse(xml_path)
@@ -127,9 +127,18 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
     if work_elem not in root: root.insert(0, work_elem)
     set_or_create(work_elem, "work-title", song_title)
 
+    # Clean up and deduplicate headers/creators
     ident = root.find(f"{ns}identification") or ET.SubElement(root, f"{ns}identification")
-    creator = ident.find(f"{ns}creator") or ET.SubElement(ident, f"{ns}creator", attrib={"type": "composer"})
-    creator.text = artist_name
+    creators = ident.findall(f"{ns}creator")
+    if creators:
+        primary_creator = creators[0]
+        primary_creator.attrib["type"] = "composer"
+        primary_creator.text = artist_name
+        for extra in creators[1:]:
+            ident.remove(extra)
+    else:
+        creator = ET.SubElement(ident, f"{ns}creator", attrib={"type": "composer"})
+        creator.text = artist_name
 
     first_part = root.find(f"{ns}part")
     if first_part is not None:
@@ -138,6 +147,14 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
             attrs = first_measure.find(f"{ns}attributes") or ET.Element(f"{ns}attributes")
             if attrs not in first_measure: first_measure.insert(0, attrs)
 
+            # Ensure Bass Clef (F4) is explicitly present
+            clef_elem = attrs.find(f"{ns}clef")
+            if clef_elem is None:
+                clef_elem = ET.SubElement(attrs, f"{ns}clef")
+            set_or_create(clef_elem, "sign", "F")
+            set_or_create(clef_elem, "line", "4")
+
+            # Set staff tuning details
             staff_details = attrs.find(f"{ns}staff-details") or ET.SubElement(attrs, f"{ns}staff-details")
             set_or_create(staff_details, "staff-lines", "4")
 
@@ -169,9 +186,10 @@ def sanitize_and_inject_tablature(xml_path, artist_name, song_title, tuning_type
                         if s_elem is not None and f_elem is not None:
                             string_num, fret_num = s_elem.text, f_elem.text
 
+                # Fix self-referential legato bug: Only add pull-off/hammer-on if frets are DIFFERENT
                 if string_num and fret_num and level >= 3 and prev_tech and prev_string == string_num and prev_fret:
                     p_fret, c_fret = int(prev_fret), int(fret_num)
-                    if p_fret > 0 and c_fret > 0 and abs(c_fret - p_fret) <= 3:
+                    if p_fret > 0 and c_fret > 0 and abs(c_fret - p_fret) <= 3 and c_fret != p_fret:
                         h_type = "hammer-on" if c_fret > p_fret else "pull-off"
                         label = "H" if c_fret > p_fret else "P"
                         ET.SubElement(prev_tech, f"{ns}{h_type}", attrib={"type": "start", "number": "1"}).text = label
