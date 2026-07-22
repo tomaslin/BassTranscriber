@@ -1,8 +1,8 @@
 import fractions
-from music21 import stream, note, meter, instrument, metadata, tie, articulations, dynamics, tempo, duration
+from music21 import stream, note, chord, meter, instrument, metadata, tie, articulations, dynamics, tempo, duration
 
 from note_event import NoteEvent
-from pitch_theory import get_key_aware_pitch
+from pitch_theory import get_directional_enharmonic_pitch
 from xml_formatter import (
     idiomatic_rhythm_snap,
     decompose_duration_engraver_rules,
@@ -24,14 +24,24 @@ def build_and_export_score(
     beat_times=None,
     instant_bpms=None,
     expressive_data=None,
+    time_sig_str: str = "4/4",
+    tuning_type: str = "4_string_standard",
 ):
     """
-    Builds music21 score stream, applies engraving layout rules, dynamics, tuplets,
-    expressive articulations, dynamic tempo maps, and exports MusicXML.
+    Builds music21 score stream, eliminates temporal drift, handles anacrusis,
+    and exports formatted MusicXML.
     """
     sec_per_quarter = (60.0 / bpm) if bpm > 0 else 0.5
-    measure_capacity = fractions.Fraction(6, 1) if is_compound else fractions.Fraction(4, 1)
-    time_sig_str = '12/8' if is_compound else '4/4'
+
+    time_sig_map = {
+        '4/4': fractions.Fraction(4, 1),
+        '3/4': fractions.Fraction(3, 1),
+        '5/4': fractions.Fraction(5, 1),
+        '6/8': fractions.Fraction(3, 1),
+        '7/8': fractions.Fraction(7, 2),
+        '12/8': fractions.Fraction(6, 1),
+    }
+    measure_capacity = time_sig_map.get(time_sig_str, fractions.Fraction(6, 1) if is_compound else fractions.Fraction(4, 1))
 
     m21_score = stream.Score()
     m21_part = stream.Part(id="P1")
@@ -47,16 +57,23 @@ def build_and_export_score(
     curr_measure.append(meter.TimeSignature(time_sig_str))
     curr_measure.append(tempo.MetronomeMark(number=round(bpm)))
 
+    if note_layer and note_layer[0].is_pickup:
+        curr_measure.number = 0
+        curr_measure.padAsAnacrusis()
+
     curr_m_fill = fractions.Fraction(0, 1)
     current_time_q = fractions.Fraction(0, 1)
     last_dynamic = None
+    prev_midi = None
 
     for i, note_evt in enumerate(note_layer):
         start_q = fractions.Fraction(round((note_evt.start / sec_per_quarter) * 4), 4)
         raw_dur_q = max(0.25, note_evt.duration / sec_per_quarter)
         dur_q = idiomatic_rhythm_snap(raw_dur_q, level=target_level, is_compound=is_compound)
 
-        # 1. Fill Rest Gaps Cleanly
+        if start_q < current_time_q:
+            start_q = current_time_q
+
         if start_q > current_time_q:
             rest_q = start_q - current_time_q
             rest_chunks = decompose_duration_engraver_rules(rest_q, curr_m_fill, measure_capacity, is_compound)
@@ -73,56 +90,66 @@ def build_and_export_score(
                     curr_measure = stream.Measure(number=curr_measure_num)
                     curr_m_fill = fractions.Fraction(0, 1)
 
-        # 2. Dynamic Tempo Map Updates
         if instant_bpms is not None and beat_times is not None and i < len(beat_times):
             curr_bpm = round(instant_bpms[min(i, len(instant_bpms) - 1)])
             if abs(curr_bpm - bpm) > 6.0 and curr_m_fill == 0:
                 bpm = curr_bpm
                 curr_measure.append(tempo.MetronomeMark(number=bpm))
 
-        # 3. Append Note Events & Expressive Articulations
-        s_idx, f_val = fretboard_path[i] if i < len(fretboard_path) else (4, 0)
-        key_pitch = get_key_aware_pitch(note_evt.pitch, detected_key)
+        fret_pos = fretboard_path[i] if i < len(fretboard_path) else (4, 0)
+
+        pitches = note_evt.pitches if note_evt.pitches else [note_evt.pitch]
+        m21_pitches = [get_directional_enharmonic_pitch(p, detected_key, prev_midi) for p in pitches]
+        prev_midi = pitches[0]
 
         note_chunks = decompose_duration_engraver_rules(dur_q, curr_m_fill, measure_capacity, is_compound)
         num_chunks = len(note_chunks)
 
-        # Dynamic Volume Markings
         if note_evt.dynamic_mark and note_evt.dynamic_mark != last_dynamic:
             curr_measure.append(dynamics.Dynamic(note_evt.dynamic_mark))
             last_dynamic = note_evt.dynamic_mark
 
         for k, chunk_dur in enumerate(note_chunks):
-            n_sub = note.Note(key_pitch)
-            
-            # Handle Triplets
-            if note_evt.is_triplet and k == 0:
-                n_sub.duration = duration.Duration(float(chunk_dur))
-                n_sub.duration.appendTuplet(duration.Tuplet(3, 2))
+            if len(m21_pitches) == 1:
+                elem_sub = note.Note(m21_pitches[0])
+                if isinstance(fret_pos, tuple):
+                    s_idx, f_val = fret_pos[0], fret_pos[1]
+                elif isinstance(fret_pos, list) and fret_pos:
+                    s_idx, f_val = fret_pos[0][0], fret_pos[0][1]
+                else:
+                    s_idx, f_val = 4, 0
+                elem_sub.articulations.extend([articulations.StringIndication(s_idx), articulations.FretIndication(f_val)])
             else:
-                n_sub.quarterLength = float(chunk_dur)
+                elem_sub = chord.Chord(m21_pitches)
+                if isinstance(fret_pos, list):
+                    for chord_note_idx, n_comp in enumerate(elem_sub.notes):
+                        if chord_note_idx < len(fret_pos):
+                            s_idx, f_val = fret_pos[chord_note_idx][0], fret_pos[chord_note_idx][1]
+                            n_comp.articulations.extend([articulations.StringIndication(s_idx), articulations.FretIndication(f_val)])
 
-            n_sub.articulations.extend([articulations.StringIndication(s_idx), articulations.FretIndication(f_val)])
+            if note_evt.is_triplet and k == 0:
+                elem_sub.duration = duration.Duration(float(chunk_dur))
+                elem_sub.duration.appendTuplet(duration.Tuplet(3, 2))
+            else:
+                elem_sub.quarterLength = float(chunk_dur)
 
-            # Ghost Notes & Articulations
             if note_evt.tag == "ghost":
-                n_sub.notehead = 'x'
+                elem_sub.notehead = 'x'
             elif note_evt.tag == "staccato" and k == 0:
-                n_sub.articulations.append(articulations.Staccato())
+                elem_sub.articulations.append(articulations.Staccato())
 
             if note_evt.is_accent and k == 0:
-                n_sub.articulations.append(articulations.Accent())
+                elem_sub.articulations.append(articulations.Accent())
 
-            # Tied Note Chunks
             if num_chunks > 1:
                 if k == 0:
-                    n_sub.tie = tie.Tie('start')
+                    elem_sub.tie = tie.Tie('start')
                 elif k == num_chunks - 1:
-                    n_sub.tie = tie.Tie('stop')
+                    elem_sub.tie = tie.Tie('stop')
                 else:
-                    n_sub.tie = tie.Tie('continue')
+                    elem_sub.tie = tie.Tie('continue')
 
-            curr_measure.append(n_sub)
+            curr_measure.append(elem_sub)
             curr_m_fill += chunk_dur
             current_time_q += chunk_dur
 
@@ -133,7 +160,6 @@ def build_and_export_score(
                 curr_measure = stream.Measure(number=curr_measure_num)
                 curr_m_fill = fractions.Fraction(0, 1)
 
-    # 4. Fill remaining space in the final measure if incomplete
     if curr_m_fill > 0 and curr_m_fill < measure_capacity:
         remaining_q = measure_capacity - curr_m_fill
         rest_chunks = decompose_duration_engraver_rules(remaining_q, curr_m_fill, measure_capacity, is_compound)
@@ -151,12 +177,11 @@ def build_and_export_score(
 
     m21_score.write('musicxml', fp=output_xml_path)
 
-    # 5. MusicXML Technical & Tablature Injection
     sanitize_and_inject_tablature(
         output_xml_path,
         artist_name,
         song_title,
-        '4_string_standard',
+        tuning_type,
         level=target_level,
         snapped_layer=note_layer,
         expressive_data=expressive_data,

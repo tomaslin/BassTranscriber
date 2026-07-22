@@ -55,10 +55,7 @@ def _split_into_valid_units(dur_q):
 
 
 def decompose_duration_engraver_rules(dur_quarter, m_fill_offset, m_capacity, is_compound=False):
-    """
-    Decomposes duration values across measure and invisible half-measure boundaries.
-    Ensures every returned chunk is a valid, non-complex MusicXML duration.
-    """
+    """Decomposes duration values across measure boundaries and midpoints."""
     units = []
     rem = fractions.Fraction(dur_quarter).limit_denominator(16)
     curr_offset = fractions.Fraction(m_fill_offset).limit_denominator(16)
@@ -69,38 +66,49 @@ def decompose_duration_engraver_rules(dur_quarter, m_fill_offset, m_capacity, is
             space = m_capacity
             curr_offset = fractions.Fraction(0, 1)
 
-        if is_compound:
-            half_capacity = fractions.Fraction(3, 1) if m_capacity == 6 else fractions.Fraction(6, 1)
+        if curr_offset == 0 and rem >= space:
+            max_take = space
+        elif not is_compound and m_capacity == fractions.Fraction(4, 1):
+            midpoint = fractions.Fraction(2, 1)
+            if curr_offset < midpoint < (curr_offset + rem):
+                max_take = midpoint - curr_offset
+            elif curr_offset % fractions.Fraction(1, 1) != 0:
+                next_beat = fractions.Fraction(int(curr_offset) + 1, 1)
+                max_take = min(next_beat - curr_offset, rem)
+            else:
+                max_take = min(rem, space)
+        elif is_compound:
+            pulse = fractions.Fraction(3, 2)
+            next_pulse = ((curr_offset // pulse) + 1) * pulse
+            if curr_offset < next_pulse < (curr_offset + rem):
+                max_take = next_pulse - curr_offset
+            else:
+                max_take = min(rem, space)
         else:
-            half_capacity = fractions.Fraction(2, 1)
+            half_capacity = m_capacity / 2
+            if curr_offset < half_capacity < (curr_offset + rem):
+                max_take = half_capacity - curr_offset
+            elif curr_offset % fractions.Fraction(1, 1) != 0:
+                next_beat = fractions.Fraction(int(curr_offset) + 1, 1)
+                max_take = min(next_beat - curr_offset, rem)
+            else:
+                max_take = min(rem, space)
 
-        if curr_offset < half_capacity < (curr_offset + rem):
-            take = half_capacity - curr_offset
-        else:
-            take = min(rem, space)
-
-        sub_chunks = _split_into_valid_units(take)
+        sub_chunks = _split_into_valid_units(max_take)
         units.extend(sub_chunks)
 
-        rem -= take
-        curr_offset = (curr_offset + take) % m_capacity
+        rem -= max_take
+        curr_offset = (curr_offset + max_take) % m_capacity
 
     return units or [fractions.Fraction(1, 4)]
 
 
 def consolidate_measure_notation(measure, m_capacity=fractions.Fraction(4, 1), is_compound=False):
-    """
-    Consolidates rests according to standard engraving rules:
-    1. Fully empty measures convert to a single Full Measure Rest.
-    2. Rests never consolidate across the measure midpoint (Beat 3 in 4/4).
-    3. Merges rests only if the resulting length is a valid single duration unit.
-    4. Merges tied notes of identical pitch cleanly.
-    """
+    """Consolidates rests and tied notes across measure beat boundaries."""
     elems = list(measure.notesAndRests)
     if not elems:
         return
 
-    # 1. Full Measure Rest Check
     total_q = sum(fractions.Fraction(e.quarterLength).limit_denominator(16) for e in elems)
     all_rests = all(isinstance(e, note.Rest) for e in elems)
     if all_rests and total_q == m_capacity:
@@ -110,7 +118,6 @@ def consolidate_measure_notation(measure, m_capacity=fractions.Fraction(4, 1), i
         measure.elements = (full_rest,)
         return
 
-    # 2. Beat-Aware Rest Consolidation
     consolidated = []
     curr_offset = fractions.Fraction(0, 1)
     i = 0
@@ -138,7 +145,6 @@ def consolidate_measure_notation(measure, m_capacity=fractions.Fraction(4, 1), i
         curr_offset += curr_q
         i += 1
 
-    # 3. Simplify tied notes of identical pitch within measure
     merged = []
     idx = 0
     while idx < len(consolidated):
@@ -169,8 +175,8 @@ def sanitize_and_inject_tablature(
     xml_path, artist_name, song_title, tuning_type, level=5, snapped_layer=None, expressive_data=None
 ):
     """
-    Injects metadata, tab tuning, and extended technique marks (slap, pop, palm mute,
-    hammer-ons, pull-offs, slides, bends, and ghost noteheads) into MusicXML.
+    Sanitizes MusicXML structure and formats dual-staff layout (Standard + TAB).
+    Duplicates note elements onto Staff 2 for TAB display in MuseScore/Guitar Pro.
     """
     try:
         with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -197,7 +203,6 @@ def sanitize_and_inject_tablature(
         elem.text = text_val
         return elem
 
-    # Metadata
     set_or_create(root, "movement-title", song_title)
 
     work_elem = root.find(f"{ns}work")
@@ -227,53 +232,82 @@ def sanitize_and_inject_tablature(
     first_part = root.find(f"{ns}part")
     if first_part is not None:
         first_part.attrib["id"] = score_part_id
-        first_measure = first_part.find(f"{ns}measure")
-        if first_measure is not None:
-            attrs = first_measure.find(f"{ns}attributes")
-            if attrs is None:
-                attrs = ET.Element(f"{ns}attributes")
-                first_measure.insert(0, attrs)
 
-            key_elem = attrs.find(f"{ns}key")
-            if key_elem is None:
-                key_elem = ET.SubElement(attrs, f"{ns}key")
-                ET.SubElement(key_elem, f"{ns}fifths").text = "0"
-                ET.SubElement(key_elem, f"{ns}mode").text = "major"
+        measures = list(first_part.findall(f"{ns}measure"))
+        for m_idx, measure in enumerate(measures, 1):
+            if m_idx > 1 and (m_idx - 1) % 4 == 0:
+                for existing_p in measure.findall(f"{ns}print"):
+                    measure.remove(existing_p)
 
-            time_elem = attrs.find(f"{ns}time")
-            if time_elem is None:
-                time_elem = ET.SubElement(attrs, f"{ns}time")
-                ET.SubElement(time_elem, f"{ns}beats").text = "4"
-                ET.SubElement(time_elem, f"{ns}beat-type").text = "4"
+                print_elem = ET.Element(f"{ns}print")
+                if (m_idx - 1) % 16 == 0:
+                    print_elem.attrib["new-page"] = "yes"
+                else:
+                    print_elem.attrib["new-system"] = "yes"
+                measure.insert(0, print_elem)
 
-            clef_elem = attrs.find(f"{ns}clef")
-            if clef_elem is None:
-                clef_elem = ET.SubElement(attrs, f"{ns}clef")
-            set_or_create(clef_elem, "sign", "F")
-            set_or_create(clef_elem, "line", "4")
+            if m_idx == 1:
+                attrs = measure.find(f"{ns}attributes")
+                if attrs is None:
+                    attrs = ET.Element(f"{ns}attributes")
+                    measure.insert(0, attrs)
 
-            staff_details = attrs.find(f"{ns}staff-details")
-            if staff_details is None:
-                staff_details = ET.SubElement(attrs, f"{ns}staff-details")
-            set_or_create(staff_details, "staff-lines", "4")
+                set_or_create(attrs, "staves", "2")
 
-            for st in list(staff_details.findall(f"{ns}staff-tuning")):
-                staff_details.remove(st)
+                for existing_clef in list(attrs.findall(f"{ns}clef")):
+                    attrs.remove(existing_clef)
+                for existing_sd in list(attrs.findall(f"{ns}staff-details")):
+                    attrs.remove(existing_sd)
 
-            tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1)]
-            for idx, (step, oct_val) in enumerate(tunings, 1):
-                s_tuning = ET.SubElement(staff_details, f"{ns}staff-tuning", attrib={"line": str(idx)})
-                ET.SubElement(s_tuning, f"{ns}tuning-step").text = step
-                ET.SubElement(s_tuning, f"{ns}tuning-octave").text = str(oct_val)
+                clef1 = ET.SubElement(attrs, f"{ns}clef", attrib={"number": "1"})
+                ET.SubElement(clef1, f"{ns}sign").text = "F"
+                ET.SubElement(clef1, f"{ns}line").text = "4"
 
-    # Injections: Slap/Pop, Palm Mute, Legato, Slides & Bends
+                clef2 = ET.SubElement(attrs, f"{ns}clef", attrib={"number": "2"})
+                ET.SubElement(clef2, f"{ns}sign").text = "TAB"
+                ET.SubElement(clef2, f"{ns}line").text = "5"
+
+                staff_details = ET.SubElement(attrs, f"{ns}staff-details", attrib={"number": "2"})
+                ET.SubElement(staff_details, f"{ns}staff-lines").text = "4"
+
+                tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1)]
+                if tuning_type == '5_string_standard':
+                    tunings = [('G', 2), ('D', 2), ('A', 1), ('E', 1), ('B', 0)]
+                    staff_details.find(f"{ns}staff-lines").text = "5"
+                elif tuning_type == '6_string_standard':
+                    tunings = [('C', 3), ('G', 2), ('D', 2), ('A', 1), ('E', 1), ('B', 0)]
+                    staff_details.find(f"{ns}staff-lines").text = "6"
+
+                for idx_t, (step, oct_val) in enumerate(tunings, 1):
+                    s_tuning = ET.SubElement(staff_details, f"{ns}staff-tuning", attrib={"line": str(idx_t)})
+                    ET.SubElement(s_tuning, f"{ns}tuning-step").text = step
+                    ET.SubElement(s_tuning, f"{ns}tuning-octave").text = str(oct_val)
+
     note_idx = 0
+    active_spanner_tag = None
+
     for part in root.findall(f"{ns}part"):
         part.attrib["id"] = score_part_id
         for measure in part.findall(f"{ns}measure"):
-            for note_elem in list(measure.findall(f"{ns}note")):
+            measure_children = list(measure)
+            for note_elem in measure_children:
+                if note_elem.tag != f"{ns}note":
+                    continue
+
                 if note_elem.find(f"{ns}rest") is not None:
                     continue
+
+                set_or_create(note_elem, "staff", "1")
+
+                pitch_elem = note_elem.find(f"{ns}pitch")
+                if pitch_elem is not None:
+                    step_val = pitch_elem.findtext(f"{ns}step") or "D"
+                    oct_val = int(pitch_elem.findtext(f"{ns}octave") or "3")
+
+                    if oct_val < 3 or (oct_val == 3 and step_val in ["C", "D"]):
+                        set_or_create(note_elem, "stem", "up")
+                    else:
+                        set_or_create(note_elem, "stem", "down")
 
                 if snapped_layer and note_idx < len(snapped_layer):
                     evt = snapped_layer[note_idx]
@@ -286,35 +320,66 @@ def sanitize_and_inject_tablature(
                     if technical is None:
                         technical = ET.SubElement(notations, f"{ns}technical")
 
-                    # Extended Techniques
-                    if evt.tag == "slap":
+                    if evt.tag == "slap" and technical.find(f"{ns}slap") is None:
                         ET.SubElement(technical, f"{ns}slap")
-                    elif evt.tag == "pop":
+                    elif evt.tag == "pop" and technical.find(f"{ns}pop") is None:
                         ET.SubElement(technical, f"{ns}pop")
-                    elif evt.tag == "palm_mute":
-                        ET.SubElement(technical, f"{ns}other-technical").text = "P.M."
 
-                    # Ghost Notes
+                    if evt.tag in ["palm_mute", "let_ring"]:
+                        if active_spanner_tag != evt.tag:
+                            active_spanner_tag = evt.tag
+                            ET.SubElement(notations, f"{ns}dashes", attrib={"type": "start", "number": "1"})
+
+                            words_dir = ET.Element(f"{ns}direction")
+                            dt = ET.SubElement(words_dir, f"{ns}direction-type")
+                            ET.SubElement(dt, f"{ns}words").text = "P.M." if evt.tag == "palm_mute" else "let ring"
+
+                            insert_pos = 0
+                            for idx_e, child in enumerate(list(measure)):
+                                if child.tag.endswith(("print", "attributes")):
+                                    insert_pos = idx_e + 1
+                            measure.insert(insert_pos, words_dir)
+                    else:
+                        if active_spanner_tag is not None:
+                            active_spanner_tag = None
+                            ET.SubElement(notations, f"{ns}dashes", attrib={"type": "stop", "number": "1"})
+
                     if evt.tag == "ghost":
-                        nh = note_elem.find(f"{ns}notehead")
-                        if nh is None:
-                            nh = ET.SubElement(note_elem, f"{ns}notehead")
-                        nh.text = "x"
+                        set_or_create(note_elem, "notehead", "x")
 
-                    # Expressive Pitch Articulations
                     if evt.is_legato:
-                        ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "start", "number": "1"}).text = "H"
-                        slur = ET.SubElement(notations, f"{ns}slur", attrib={"type": "start", "number": "1"})
-                    if evt.is_slide:
+                        if technical.find(f"{ns}hammer-on") is None:
+                            ET.SubElement(technical, f"{ns}hammer-on", attrib={"type": "start", "number": "1"}).text = "H"
+                        if notations.find(f"{ns}slur") is None:
+                            ET.SubElement(notations, f"{ns}slur", attrib={"type": "start", "number": "1"})
+
+                    if evt.is_slide and notations.find(f"{ns}slide") is None:
                         ET.SubElement(notations, f"{ns}slide", attrib={"type": "start", "number": "1"}).text = "slide"
 
-                    # Pitch Bends
-                    if evt.bends and any(abs(b) > 0.2 for b in evt.bends):
+                    if evt.bends and any(abs(b) > 0.1 for b in evt.bends):
                         bend_elem = ET.SubElement(technical, f"{ns}bend")
                         bend_alter = ET.SubElement(bend_elem, f"{ns}bend-alter")
                         bend_alter.text = str(round(max(evt.bends), 1))
+                    elif abs(evt.microtone_cents) > 10.0:
+                        bend_elem = ET.SubElement(technical, f"{ns}bend")
+                        bend_alter = ET.SubElement(bend_alter, f"{ns}bend-alter")
+                        bend_alter.text = str(round(evt.microtone_cents / 100.0, 2))
+
+                    # Duplicate note to Staff 2 for TAB rendering
+                    tab_note = ET.fromstring(ET.tostring(note_elem))
+                    tab_note.find(f"{ns}staff").text = "2"
+                    
+                    note_insert_idx = list(measure).index(note_elem) + 1
+                    measure.insert(note_insert_idx, tab_note)
 
                     note_idx += 1
+
+            if active_spanner_tag is not None:
+                last_note = measure.findall(f"{ns}note")[-1] if measure.findall(f"{ns}note") else None
+                if last_note is not None:
+                    notations = last_note.find(f"{ns}notations") or ET.SubElement(last_note, f"{ns}notations")
+                    ET.SubElement(notations, f"{ns}dashes", attrib={"type": "stop", "number": "1"})
+                active_spanner_tag = None
 
     if ns:
         ET.register_namespace('', ns.strip('{}'))

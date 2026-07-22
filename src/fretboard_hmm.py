@@ -2,18 +2,24 @@ import math
 from note_event import NoteEvent
 from pitch_theory import fold_pitch_to_bass_range
 
+TUNING_PROFILES = {
+    '4_string_standard': {1: 43, 2: 38, 3: 33, 4: 28},        # G2, D2, A1, E1
+    '5_string_standard': {1: 43, 2: 38, 3: 33, 4: 28, 5: 23},  # G2, D2, A1, E1, B0
+    '6_string_standard': {1: 48, 2: 43, 3: 38, 4: 33, 5: 28, 6: 23}, # C3, G2, D2, A1, E1, B0
+}
+
 
 class ErgonomicFretboardHMMSolver:
     def __init__(self, tuning_type='4_string_standard', beam_width=8):
-        self.tuning_type = '4_string_standard'
+        self.tuning_type = tuning_type if tuning_type in TUNING_PROFILES else '4_string_standard'
         self.beam_width = beam_width
-        
-        # String 1 = Highest Pitch (G2=43), String 4 = Lowest Pitch (E1=28)
-        self.strings = {1: 43, 2: 38, 3: 33, 4: 28}
-        self.num_frets = 20
+        self.strings = TUNING_PROFILES[self.tuning_type]
+        self.num_frets = 24
 
     def get_valid_positions(self, midi_pitch: int):
-        midi_pitch = fold_pitch_to_bass_range(midi_pitch)
+        min_p = min(self.strings.values())
+        max_p = max(self.strings.values()) + self.num_frets
+        midi_pitch = fold_pitch_to_bass_range(midi_pitch, min_pitch=min_p, max_pitch=max_p)
         
         positions = []
         for s, open_p in self.strings.items():
@@ -56,7 +62,6 @@ class ErgonomicFretboardHMMSolver:
         V = [{} for _ in range(T)]
         backpointer = [{} for _ in range(T)]
 
-        # --- Initial Frame (t = 0) ---
         initial_anchor = self._get_local_anchor_fret(note_events, 0)
         for state in sequence_states[0]:
             string_num, fret, finger = state
@@ -76,7 +81,6 @@ class ErgonomicFretboardHMMSolver:
         if len(V[0]) > self.beam_width:
             V[0] = dict(sorted(V[0].items(), key=lambda x: x[1])[:self.beam_width])
 
-        # --- Forward Pass ---
         for t in range(1, T):
             prev_onset, prev_offset = note_events[t-1].start, note_events[t-1].end
             curr_onset, curr_offset = note_events[t].start, note_events[t].end

@@ -104,7 +104,7 @@ def filter_performance_for_level(
     downbeats = np.arange(beats[0], layer[-1].end + measure_len, measure_len) if layer[-1].end >= beats[0] else np.array([])
     half_measure_beats = np.arange(beats[0] + (measure_len / 2), layer[-1].end + measure_len, measure_len) if layer[-1].end >= beats[0] else np.array([])
     eighth_beats = [b + beat_interval / 2 for b in beats]
-    
+
     ghost_enabled = genre_config["features"].get("ghost_notes", True) if genre_config else True
 
     if level <= 1:
@@ -118,13 +118,16 @@ def filter_performance_for_level(
                         start=root_note.start,
                         end=root_note.start + (measure_len * 0.5),
                         pitch=root_note.pitch,
+                        pitches=root_note.pitches,
                         amplitude=root_note.amplitude,
                         bends=root_note.bends,
+                        microtone_cents=root_note.microtone_cents,
                         tag="normal",
                         duty_cycle=root_note.duty_cycle,
                         is_triplet=root_note.is_triplet,
                         is_accent=root_note.is_accent,
                         dynamic_mark=root_note.dynamic_mark,
+                        is_pickup=root_note.is_pickup,
                     )
                 )
         return filtered
@@ -143,13 +146,16 @@ def filter_performance_for_level(
                         start=note.start,
                         end=note.end,
                         pitch=note.pitch,
+                        pitches=note.pitches,
                         amplitude=note.amplitude,
                         bends=note.bends,
+                        microtone_cents=note.microtone_cents,
                         tag="normal",
                         duty_cycle=note.duty_cycle,
                         is_triplet=note.is_triplet,
                         is_accent=note.is_accent,
                         dynamic_mark=note.dynamic_mark,
+                        is_pickup=note.is_pickup,
                     )
                 )
         elif level == 3:
@@ -192,32 +198,32 @@ class AudioTranscriptionPipeline:
             if os.path.exists(p):
                 stem_dict[name], _ = librosa.load(p, sr=sr, mono=True)
 
-        # 1. Tuning & Key Detection
         tuning_offset = estimate_master_tuning(bass_y, sr)
         detected_key, _ = detect_key_signature(
             bass_y, sr, parsed_key=parsed_key_str, bass_filter_fn=apply_bass_bandpass
         )
 
-        # 2. Audio Pitch Detection & Extended Technique Detection
         sos_low = signal.butter(4, [25 / (sr / 2), 280 / (sr / 2)], 'bandpass', output='sos')
         bass_low = signal.sosfiltfilt(sos_low, bass_y)
 
         raw_pyin_notes = pyin_predict_notes(bass_low, sr, conf_threshold=0.30, tuning_offset=tuning_offset)
-        
+
+        tuning_type = genre_config.get("tuning", "4_string_standard") if genre_config else "4_string_standard"
+        min_p = 23 if "5_string" in tuning_type or "6_string" in tuning_type else 28
+        max_p = 72 if "6_string" in tuning_type else 67
+
         corrected_notes = []
         for n in raw_pyin_notes:
-            n.pitch = max(28, min(67, int(round(n.pitch))))
+            n.pitch = max(min_p, min(max_p, int(round(n.pitch))))
             corrected_notes.append(n)
 
         verified_notes = cross_stem_bleed_filter(corrected_notes, stem_dict, sr=sr)
         purged_notes = purge_audio_artifacts(verified_notes, bass_audio=bass_y, sr=sr)
 
-        # 3. Tempo Grid Map & Beat Estimation
-        beat_times, instant_bpms = estimate_beat_grid(drums_y, sr)
+        beat_times, instant_bpms, time_sig_str = estimate_beat_grid(drums_y, sr)
         bpm = float(np.median(instant_bpms)) if len(instant_bpms) > 0 else 120.0
-        is_compound = (genre_config and genre_config["features"].get("compound_meter")) or (bpm < 95.0)
+        is_compound = (genre_config and genre_config["features"].get("compound_meter")) or (time_sig_str in ["6/8", "12/8"])
 
-        # 4. Grid Alignment, Triplet Evaluation & Dynamics Scoring
         grid_aligned_notes = snap_events_to_beat_grid(purged_notes, beat_times, bpm, is_compound=is_compound)
 
         selected_level = level if (isinstance(level, int) and 0 <= level <= 5) else 5
@@ -226,7 +232,7 @@ class AudioTranscriptionPipeline:
         for target_level in target_levels:
             file_title = f"{clean_filename}_Level{target_level}" if generate_all_levels else clean_filename
             xml_out = os.path.join(self.output_dir, f"{file_title}.musicxml")
-            
+
             level_layer = filter_performance_for_level(
                 grid_aligned_notes, target_level, beat_times, is_compound, bpm, genre_config=genre_config
             )
@@ -235,15 +241,14 @@ class AudioTranscriptionPipeline:
                 continue
 
             snapped_layer = []
-            for note in level_layer:
-                note.pitch = snap_pitch_to_scale(note.pitch, detected_key, level=target_level)
+            for idx_l, note in enumerate(level_layer):
+                next_p = level_layer[idx_l + 1].pitch if idx_l + 1 < len(level_layer) else None
+                note.pitch = snap_pitch_to_scale(note.pitch, detected_key, level=target_level, next_midi=next_p)
                 snapped_layer.append(note)
 
-            # 5. Fretboard Ergonomics & Expressive Solver (Rakes, Legatos, Slides)
-            hmm = ErgonomicFretboardHMMSolver(tuning_type='4_string_standard')
+            hmm = ErgonomicFretboardHMMSolver(tuning_type=tuning_type)
             fretboard_path, rakes, legatos, slides = hmm.solve(snapped_layer, bpm=bpm)
 
-            # Update Expressive Markers on NoteEvents
             for idx_n, note_n in enumerate(snapped_layer):
                 if idx_n < len(legatos):
                     note_n.is_legato = legatos[idx_n]
@@ -252,7 +257,6 @@ class AudioTranscriptionPipeline:
                 if idx_n < len(rakes):
                     note_n.is_rake = rakes[idx_n]
 
-            # 6. Score Engraving & Export with Full Tempo & Expression Map
             expressive_data = {'rakes': rakes, 'legatos': legatos, 'slides': slides}
             build_and_export_score(
                 snapped_layer,
@@ -267,5 +271,7 @@ class AudioTranscriptionPipeline:
                 beat_times=beat_times,
                 instant_bpms=instant_bpms,
                 expressive_data=expressive_data,
+                time_sig_str=time_sig_str,
+                tuning_type=tuning_type,
             )
             print(f" -> Output saved: {xml_out}")

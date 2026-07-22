@@ -7,12 +7,14 @@ MIN_BASS_MIDI = 28  # E1
 MAX_BASS_MIDI = 67  # G4
 
 
-def fold_pitch_to_bass_range(midi_pitch: int) -> int:
-    """Folds any MIDI pitch into 4-string bass octave range (E1 to G4)."""
-    while midi_pitch > MAX_BASS_MIDI:
-        midi_pitch -= 12
-    while midi_pitch < MIN_BASS_MIDI:
+def fold_pitch_to_bass_range(midi_pitch: int, min_pitch: int = 23, max_pitch: int = 72) -> int:
+    """Folds pitch into bass range using bounded arithmetic to prevent infinite loops."""
+    if min_pitch >= max_pitch:
+        return min_pitch
+    while midi_pitch < min_pitch:
         midi_pitch += 12
+    while midi_pitch > max_pitch:
+        midi_pitch -= 12
     return midi_pitch
 
 
@@ -39,7 +41,10 @@ def normalize_key_str(raw_key: str):
 
 
 def detect_key_signature(audio_y, sr, parsed_key=None, bass_filter_fn=None):
-    """Detects musical key signature using chroma profiles or parsed key metadata."""
+    """
+    Detects musical key signature and mode using chroma profiles across Major,
+    Minor, Mixolydian, Dorian, and Blues profiles.
+    """
     if parsed_key:
         normalized = normalize_key_str(parsed_key)
         try:
@@ -60,19 +65,29 @@ def detect_key_signature(audio_y, sr, parsed_key=None, bass_filter_fn=None):
 
     major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
     minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 2.98, 2.69, 3.34, 3.17])
+    mixolydian_profile = np.array([6.20, 2.10, 3.40, 2.20, 4.30, 4.00, 2.40, 5.10, 2.30, 3.50, 4.80, 2.50])
+    dorian_profile = np.array([6.20, 2.50, 3.50, 5.20, 2.50, 3.80, 2.40, 4.80, 2.80, 4.00, 3.20, 2.80])
+    blues_profile = np.array([6.50, 1.80, 2.20, 5.50, 2.00, 5.00, 4.80, 5.20, 1.80, 2.20, 4.50, 2.00])
+
     pitch_names = ['C', 'C#', 'D', 'E-', 'E', 'F', 'F#', 'G', 'A-', 'A', 'B-', 'B']
+    profiles = [
+        (major_profile, "major"),
+        (minor_profile, "minor"),
+        (mixolydian_profile, "mixolydian"),
+        (dorian_profile, "dorian"),
+        (blues_profile, "minor"),
+    ]
 
     best_score, best_key_str = -float('inf'), 'C'
 
     for i in range(12):
         rot_chroma = np.roll(chroma_sum, -i)
-        maj_corr = np.nan_to_num(np.corrcoef(rot_chroma, major_profile)[0, 1])
-        min_corr = np.nan_to_num(np.corrcoef(rot_chroma, minor_profile)[0, 1])
-
-        if maj_corr > best_score:
-            best_score, best_key_str = maj_corr, pitch_names[i]
-        if min_corr > best_score:
-            best_score, best_key_str = min_corr, pitch_names[i].lower()
+        for prof, mode_type in profiles:
+            corr = np.nan_to_num(np.corrcoef(rot_chroma, prof)[0, 1])
+            if corr > best_score:
+                best_score = corr
+                root_note = pitch_names[i]
+                best_key_str = root_note if mode_type == "major" else root_note.lower()
 
     try:
         return key.Key(best_key_str), False
@@ -80,10 +95,10 @@ def detect_key_signature(audio_y, sr, parsed_key=None, bass_filter_fn=None):
         return key.Key('C'), False
 
 
-def snap_pitch_to_scale(midi_val: int, key_obj, level: int = 5) -> int:
+def snap_pitch_to_scale(midi_val: int, key_obj, level: int = 5, next_midi: int = None) -> int:
     """
-    Folds pitch into 4-string bass range.
-    Preserves chromatic passing tones for levels >= 2, only quantizing diatonic pitches at simplified levels 0-1.
+    Folds pitch into bass range while preserving chromatic voice leading,
+    secondary dominants, and chromatic passing tones.
     """
     midi_val = fold_pitch_to_bass_range(midi_val)
 
@@ -96,6 +111,9 @@ def snap_pitch_to_scale(midi_val: int, key_obj, level: int = 5) -> int:
     if curr_pc in scale_pcs:
         return midi_val
 
+    if next_midi is not None and abs(next_midi - midi_val) == 1:
+        return midi_val
+
     distances = sorted([((sp - curr_pc + 6) % 12 - 6, sp) for sp in scale_pcs], key=lambda x: abs(x[0]))
 
     if level <= 1 or abs(distances[0][0]) <= 1:
@@ -104,11 +122,34 @@ def snap_pitch_to_scale(midi_val: int, key_obj, level: int = 5) -> int:
     return midi_val
 
 
-def get_key_aware_pitch(midi_val: int, key_obj):
-    """Returns key-aware music21 Pitch object for clean enharmonic spelling."""
-    if key_obj is None:
-        return pitch.Pitch(midi=midi_val)
-    try:
-        return key_obj.getPitchFromMidi(midi_val)
-    except Exception:
-        return pitch.Pitch(midi=midi_val)
+def get_directional_enharmonic_pitch(midi_val: int, key_obj=None, prev_midi: int = None) -> pitch.Pitch:
+    """
+    Returns a key-aware and line-direction-aware music21 Pitch object.
+    Sharps are preferred when moving upward, flats when moving downward.
+    """
+    p = pitch.Pitch(midi=midi_val)
+
+    if key_obj is not None:
+        try:
+            curr_pc = midi_val % 12
+            key_pitches = key_obj.getPitches()
+            matching_p = next((kp for kp in key_pitches if kp.pitchClass == curr_pc), None)
+            if matching_p is not None:
+                octave_val = (midi_val // 12) - 1
+                return pitch.Pitch(f"{matching_p.name}{octave_val}")
+        except Exception:
+            pass
+
+    if p.accidental is not None and prev_midi is not None and prev_midi != midi_val:
+        is_ascending = midi_val > prev_midi
+        if is_ascending and p.accidental.name == 'flat':
+            p.getEnharmonic(inPlace=True)
+        elif not is_ascending and p.accidental.name == 'sharp':
+            p.getEnharmonic(inPlace=True)
+
+    return p
+
+
+def get_key_aware_pitch(midi_val: int, key_obj=None, prev_midi: int = None) -> pitch.Pitch:
+    """Wrapper function for directional key-aware pitch conversion."""
+    return get_directional_enharmonic_pitch(midi_val, key_obj, prev_midi)
